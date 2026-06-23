@@ -53,6 +53,7 @@ type SharePointColumn = { displayName?: string; name?: string };
 type SharePointDrive = { id: string; name?: string };
 type SharePointDriveItem = { id: string; name?: string; webUrl?: string };
 type MachinePhotoUploadResult = { document: MachineDocument; warning?: string };
+type MachineFieldUpdate = Pick<Machine, "status" | "verantwoordelijkeId">;
 type SharePointState =
   | { status: "idle"; data?: undefined; error?: undefined }
   | { status: "loading"; data?: undefined; error?: undefined }
@@ -781,6 +782,69 @@ async function uploadMachinePhotoToSharePoint(
   };
 }
 
+async function updateMachineFieldsInSharePoint(
+  auth: AuthState,
+  machine: Machine,
+  update: MachineFieldUpdate,
+) {
+  if (auth.status !== "signedIn") {
+    throw new Error("Je moet ingelogd zijn om machinegegevens op te slaan.");
+  }
+
+  const machineItemId = sharePointItemIdFromAppId(machine.id);
+  const verantwoordelijkeItemId = sharePointItemIdFromAppId(update.verantwoordelijkeId);
+
+  if (!machineItemId) {
+    throw new Error("Deze machine heeft geen SharePoint-id.");
+  }
+
+  const accessToken = await getSharePointToken(auth.msal, auth.account);
+  const site = await graphFetch<{ id: string }>(
+    `/sites/${sharePointHost}:${sharePointSitePath}`,
+    accessToken,
+  );
+  const lists = await graphFetch<{ value: SharePointList[] }>(
+    `/sites/${site.id}/lists?$select=id,displayName,name`,
+    accessToken,
+  );
+  const machinesList = lists.value.find(
+    (list) => list.displayName === "Machines" || list.name === "Machines",
+  );
+
+  if (!machinesList) {
+    throw new Error("SharePoint-lijst 'Machines' is niet gevonden.");
+  }
+
+  const columns = await graphFetch<{ value: SharePointColumn[] }>(
+    `/sites/${site.id}/lists/${machinesList.id}/columns?$select=name,displayName`,
+    accessToken,
+  );
+  const fields: Record<string, string> = {};
+  const statusColumn = columnInternalName(columns.value, "Status");
+  const verantwoordelijkeColumn = columnInternalName(columns.value, "Verantwoordelijke");
+
+  if (statusColumn) fields[statusColumn] = update.status;
+  if (verantwoordelijkeColumn && verantwoordelijkeItemId) {
+    fields[`${verantwoordelijkeColumn}LookupId`] = verantwoordelijkeItemId;
+  }
+
+  if (Object.keys(fields).length === 0) {
+    throw new Error("Geen passende SharePoint-kolommen gevonden voor Status/Verantwoordelijke.");
+  }
+
+  await graphFetchRaw(
+    `/sites/${site.id}/lists/${machinesList.id}/items/${machineItemId}/fields`,
+    accessToken,
+    {
+      body: JSON.stringify(fields),
+      headers: {
+        "Content-Type": "application/json",
+      },
+      method: "PATCH",
+    },
+  );
+}
+
 async function fileToBijlage(file: File): Promise<Bijlage> {
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -800,9 +864,10 @@ async function fileToBijlage(file: File): Promise<Bijlage> {
 
 export default function Home() {
   const { auth, signIn, signOut } = useMicrosoftAuth();
-  const { data: localData, updateEntity, resetData } = useAppData();
+  const { data: localData, updateEntity } = useAppData();
   const { photos: machinePhotos, updateMachinePhoto } = useMachinePhotoOverrides();
   const sharePointData = useSharePointData(auth);
+  const [machineFieldOverrides, setMachineFieldOverrides] = useState<Record<string, Partial<Machine>>>({});
   const sourceData = sharePointData.status === "ready" ? sharePointData.data : localData;
   const data = useMemo(
     () => ({
@@ -814,11 +879,12 @@ export default function Home() {
 
         return {
           ...machine,
+          ...machineFieldOverrides[machine.id],
           afbeeldingUrl: machinePhotos[machine.id] ?? machine.afbeeldingUrl ?? documentPhoto?.url ?? "",
         };
       }),
     }),
-    [machinePhotos, sourceData],
+    [machineFieldOverrides, machinePhotos, sourceData],
   );
   const [section, setSection] = useState<Section>("werkvloer");
   const [flowScreen, setFlowScreen] = useState<FlowScreen>("start");
@@ -861,6 +927,17 @@ export default function Home() {
     updateMachinePhoto(machine.id, result.document.url);
     updateEntity("documenten", [result.document, ...data.documenten]);
     return result;
+  }
+
+  async function updateMachinePassport(machine: Machine, update: MachineFieldUpdate) {
+    await updateMachineFieldsInSharePoint(auth, machine, update);
+    setMachineFieldOverrides((current) => ({
+      ...current,
+      [machine.id]: {
+        ...current[machine.id],
+        ...update,
+      },
+    }));
   }
 
   if (auth.status === "loading") {
@@ -931,6 +1008,7 @@ export default function Home() {
           setSelectedAfdelingId={setSelectedAfdelingId}
           setSelectedMachineId={setSelectedMachineId}
           setSelectedPersoonId={setSelectedPersoonId}
+          updateMachinePassport={updateMachinePassport}
           updateDocumenten={(documenten) => updateEntity("documenten", documenten)}
           uploadMachinePhoto={uploadMachinePhoto}
           updateOnderhoud={(onderhoud) => updateEntity("onderhoud", onderhoud)}
@@ -940,7 +1018,6 @@ export default function Home() {
         <BeheerView
           activeEntity={activeEntity}
           data={data}
-          resetData={resetData}
           setActiveEntity={setActiveEntity}
           updateEntity={updateEntity}
         />
@@ -1025,6 +1102,7 @@ function WerkvloerFlow({
   setSelectedAfdelingId,
   setSelectedMachineId,
   setSelectedPersoonId,
+  updateMachinePassport,
   updateDocumenten,
   uploadMachinePhoto,
   updateOnderhoud,
@@ -1042,6 +1120,7 @@ function WerkvloerFlow({
   setSelectedAfdelingId: (id: string) => void;
   setSelectedMachineId: (id: string) => void;
   setSelectedPersoonId: (id: string) => void;
+  updateMachinePassport: (machine: Machine, update: MachineFieldUpdate) => Promise<void>;
   updateDocumenten: (documenten: MachineDocument[]) => void;
   uploadMachinePhoto: (machine: Machine, file: File) => Promise<MachinePhotoUploadResult>;
   updateOnderhoud: (onderhoud: Onderhoud[]) => void;
@@ -1134,6 +1213,22 @@ function WerkvloerFlow({
       setSaveNotice(result.warning ?? "Machinefoto opgeslagen in SharePoint.");
     } catch (error) {
       setSaveNotice(error instanceof Error ? error.message : "Machinefoto uploaden naar SharePoint is niet gelukt.");
+    }
+  }
+
+  async function editMachinePassport(formData: FormData) {
+    if (!selectedMachine) return;
+
+    const update: MachineFieldUpdate = {
+      status: String(formData.get("status") || selectedMachine.status) as Machine["status"],
+      verantwoordelijkeId: String(formData.get("verantwoordelijkeId") || selectedMachine.verantwoordelijkeId),
+    };
+
+    try {
+      await updateMachinePassport(selectedMachine, update);
+      setSaveNotice("Machinepaspoort opgeslagen in SharePoint.");
+    } catch (error) {
+      setSaveNotice(error instanceof Error ? error.message : "Machinepaspoort opslaan is niet gelukt.");
     }
   }
 
@@ -1346,6 +1441,11 @@ function WerkvloerFlow({
           <MachinePhotoPanel machine={selectedMachine} onSubmit={addMachinePhoto} />
           <span className={`statusPill ${selectedMachine.status === "Operationeel" ? "good" : "alert"}`}>{selectedMachine.status}</span>
           <p>{selectedMachine.omschrijving}</p>
+          <MachinePassportEditForm
+            machine={selectedMachine}
+            onSubmit={editMachinePassport}
+            personen={activePersonen}
+          />
           <dl className="passportMeta">
             <div><dt>Serie</dt><dd>{selectedMachine.serieNummer}</dd></div>
             <div><dt>Verantwoordelijke</dt><dd>{verantwoordelijke?.title ?? "-"}</dd></div>
@@ -1518,6 +1618,52 @@ function MachinePhotoPanel({ machine, onSubmit }: { machine: Machine; onSubmit: 
         </button>
       </form>
     </section>
+  );
+}
+
+function MachinePassportEditForm({
+  machine,
+  onSubmit,
+  personen,
+}: {
+  machine: Machine;
+  onSubmit: (formData: FormData) => Promise<void>;
+  personen: Persoon[];
+}) {
+  const [busy, setBusy] = useState(false);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    setBusy(true);
+    await onSubmit(new FormData(form));
+    setBusy(false);
+  }
+
+  return (
+    <form className="passportEditForm" onSubmit={handleSubmit}>
+      <label>
+        <span>Status</span>
+        <select name="status" defaultValue={machine.status}>
+          <option>Operationeel</option>
+          <option>Onderhoud nodig</option>
+          <option>Buiten gebruik</option>
+        </select>
+      </label>
+      <label>
+        <span>Verantwoordelijke</span>
+        <select name="verantwoordelijkeId" defaultValue={machine.verantwoordelijkeId}>
+          {personen.map((persoon) => (
+            <option key={persoon.id} value={persoon.id}>
+              {persoon.title}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button className="smallButton" disabled={busy} type="submit">
+        {busy ? "Opslaan..." : "Paspoort opslaan"}
+      </button>
+    </form>
   );
 }
 
@@ -1934,13 +2080,11 @@ function BeheerView({
   activeEntity,
   setActiveEntity,
   updateEntity,
-  resetData,
 }: {
   data: AppData;
   activeEntity: EntityName;
   setActiveEntity: (entity: EntityName) => void;
   updateEntity: <T extends EntityName>(entity: T, records: AppData[T]) => void;
-  resetData: () => void;
 }) {
   const records = data[activeEntity] as Array<Record<string, unknown>>;
 
@@ -1985,7 +2129,6 @@ function BeheerView({
             </button>
           ))}
         </div>
-        <button className="ghostButton" onClick={resetData} type="button">Testdata herstellen</button>
       </aside>
 
       <section className="panel tablePanel">

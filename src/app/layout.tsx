@@ -98,9 +98,9 @@ export default function RootLayout({
                   background: #000 !important;
                 }
                 .homeInBrand {
-                  background: #000 !important;
+                  background: #fff !important;
                   border-color: #a29061 !important;
-                  color: #fff !important;
+                  color: #000 !important;
                 }
               }
             `,

@@ -134,6 +134,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .machinePhotoForm { align-items: end; display: grid; gap: 10px; grid-template-columns: 1fr auto; }
 .machinePhotoForm .fileBox { margin: 0; }
 .machinePhotoForm .smallButton { min-height: 48px; }
+.passportEditForm { background: var(--gold-pale); border: 1px solid var(--line); border-left: 6px solid var(--gold); border-radius: 8px; display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)) auto; padding: 12px; }
+.passportEditForm label { display: grid; gap: 6px; }
+.passportEditForm label span, .entryForm label, .filterBlock label { color: var(--gold); font-size: 12px; font-weight: 700; text-transform: uppercase; }
+.passportEditForm select { background: var(--white); border: 1px solid var(--line); border-radius: 6px; color: var(--black); min-height: 42px; padding: 9px 10px; width: 100%; }
 .statusPill { background: var(--gold-pale); border: 1px solid var(--gold); border-radius: 999px; color: var(--gold); display: inline-flex; font-weight: 700; justify-self: start; padding: 6px 12px; }
 .statusPill.good { background: var(--black); border-color: var(--black); color: var(--white); }
 .statusPill.alert { border-color: var(--red); color: var(--red); }
@@ -146,13 +150,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .entryForm { display: grid; gap: 12px; margin-bottom: 16px; }
 .entryForm h2 { align-items: center; border-bottom: 2px solid var(--gold-soft); color: var(--black); display: flex; gap: 10px; font-size: 22px; line-height: 1.15; padding-bottom: 10px; }
 .entryForm h2 .lineIcon { color: var(--red); }
-.entryForm label { color: var(--black); display: grid; gap: 6px; font-weight: 700; }
+.entryForm label { background: rgba(255,255,255,.6); border: 1px solid var(--gold-soft); border-radius: 8px; display: grid; gap: 7px; padding: 10px; }
 .entryForm input, .entryForm textarea, .entryForm select, .filterBlock select, td input { background: var(--white); border: 1px solid var(--line); border-radius: 6px; color: var(--foreground); min-height: 42px; padding: 10px; width: 100%; }
+.entryForm input, .entryForm textarea, .entryForm select, .filterBlock select, .passportEditForm select { font-weight: 400; text-transform: none; }
 .entryForm textarea { resize: vertical; }
 .formActions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }
 .checkLine { align-items: center; display: flex !important; gap: 10px !important; grid-template-columns: auto 1fr; }
 .checkLine input { min-height: 20px; width: 20px; }
-.fileBox { align-items: center; border: 1px dashed var(--gold); border-radius: 8px; color: var(--gold); display: grid; gap: 8px; justify-items: start; padding: 14px; }
+.fileBox { align-items: center; border: 1px dashed var(--gold) !important; border-radius: 8px; color: var(--gold); display: grid; gap: 8px; justify-items: start; padding: 14px; }
 .fileBox input { border: 0; min-height: 0; padding: 0; }
 .fileBox.red { border-color: var(--red); color: var(--red); }
 .alertForm { border-color: rgba(225,6,0,.3); box-shadow: inset 4px 0 0 var(--red); }
@@ -223,21 +228,26 @@ td input[type="checkbox"] { min-height: 22px; width: 22px; }
 @media (max-width: 680px) {
   .appShell { padding: 10px; }
   .appShell::before { left: 10px; right: 10px; }
-  .topbar { align-items: stretch; background: var(--panel); display: grid; gap: 8px; margin-bottom: 14px; padding: 8px; }
-  .brandZone { background: var(--black); border-radius: 6px; justify-content: space-between; min-height: 0; min-width: 0; padding: 8px; }
-  .homeInBrand { min-height: 40px; padding: 0 12px; }
-  .topActions { display: grid; width: 100%; }
-  .userBadge { align-items: stretch; display: grid; gap: 8px; }
+  .topbar { align-items: stretch; background: var(--panel); display: grid; gap: 10px; margin-bottom: 12px; padding: 10px; }
+  .brandZone { background: var(--black); border-radius: 6px; justify-content: space-between; min-height: 0; min-width: 0; padding: 8px 10px; }
+  .homeInBrand { background: var(--white); color: var(--black); min-height: 42px; padding: 0 14px; }
+  .topActions { display: grid; gap: 8px; width: 100%; }
+  .userBadge { align-items: center; background: transparent; border: 0; border-bottom: 1px solid var(--line); border-left: 0; border-radius: 0; box-shadow: none; display: grid; gap: 8px; grid-template-columns: 1fr auto; min-height: 0; padding: 0 0 8px; }
   .userBadge strong { max-width: none; }
-  .logoutButton { width: 100%; }
+  .userBadge small { font-size: 10px; }
+  .logoutButton { min-height: 36px; padding: 0 14px; width: auto; }
   .brandButton strong { font-size: 20px; }
-  .brandLogo { height: 56px; width: 56px; }
+  .brandLogo { height: 54px; width: 54px; }
   .appTitle { display: none; }
   .brandMark { height: 50px; width: 50px; }
   .navSwitch { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
-  .navSwitch button { min-height: 46px; min-width: 0; padding: 0 8px; }
+  .topNavButton { box-shadow: 0 4px 0 rgba(162,144,97,.22); min-width: 0; }
+  .navSwitch button { min-height: 44px; min-width: 0; padding: 0 8px; }
   .pilotNotice, .dataNotice { align-items: flex-start; display: grid; gap: 4px; }
+  .machinePhoto, .machinePhotoPlaceholder { height: clamp(180px, 54vw, 300px); }
+  .machinePhotoPlaceholder { min-height: 180px; }
   .machinePhotoForm { grid-template-columns: 1fr; }
+  .passportEditForm { grid-template-columns: 1fr; }
   .documentOpenCard { grid-template-columns: 1fr; }
   .mobileScreen { min-height: calc(100vh - 150px); padding: 16px 14px 96px; }
   .heroScreen { gap: 18px; min-height: calc(100vh - 150px); }
