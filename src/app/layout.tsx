@@ -74,6 +74,22 @@ export default function RootLayout({
                 border: 2px solid #a29061 !important;
                 color: #000 !important;
               }
+              .topNavButton {
+                background: #fff !important;
+                border: 2px solid #a29061 !important;
+                box-shadow: 0 5px 0 rgba(162,144,97,.22) !important;
+                color: #000 !important;
+              }
+              .topNavButton.active {
+                background: #000 !important;
+                border-color: #a29061 !important;
+                color: #fff !important;
+              }
+              .logoutButton {
+                background: #e10600 !important;
+                border: 2px solid #e10600 !important;
+                color: #fff !important;
+              }
               @media (max-width: 680px) {
                 .topbar {
                   background: #fffdf8 !important;

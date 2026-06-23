@@ -1,7 +1,11 @@
 ﻿"use client";
 
 import Image from "next/image";
-import { AccountInfo, PublicClientApplication } from "@azure/msal-browser";
+import {
+  AccountInfo,
+  InteractionRequiredAuthError,
+  PublicClientApplication,
+} from "@azure/msal-browser";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { initialData } from "@/lib/seed-data";
 import type {
@@ -19,8 +23,12 @@ import type {
 } from "@/lib/types";
 
 const storageKey = "werkvloer-machinebeheer-v1";
+const machinePhotoStorageKey = "werkvloer-machinebeheer-machine-fotos-v1";
 const microsoftClientId = "0d1f2e04-7363-408c-8d69-26516c6f1e98";
 const microsoftTenantId = "568c87e9-d6ed-4409-acab-1251c4d47545";
+const graphScopes = ["User.Read", "Sites.ReadWrite.All"];
+const sharePointHost = "1906makersvancharcuterie.sharepoint.com";
+const sharePointSitePath = "/sites/werkvloer-machinebeheer";
 
 type Section = "werkvloer" | "beheer";
 type FlowScreen =
@@ -39,6 +47,17 @@ type AuthState =
   | { status: "signedOut"; msal: PublicClientApplication }
   | { status: "signedIn"; account: AccountInfo; msal: PublicClientApplication }
   | { status: "error"; error: string; msal?: PublicClientApplication };
+type SharePointListItem = { id: string; fields?: Record<string, unknown>; driveItem?: { name?: string; webUrl?: string } };
+type SharePointList = { id: string; displayName?: string; name?: string };
+type SharePointColumn = { displayName?: string; name?: string };
+type SharePointDrive = { id: string; name?: string };
+type SharePointDriveItem = { id: string; name?: string; webUrl?: string };
+type MachinePhotoUploadResult = { document: MachineDocument; warning?: string };
+type SharePointState =
+  | { status: "idle"; data?: undefined; error?: undefined }
+  | { status: "loading"; data?: undefined; error?: undefined }
+  | { status: "ready"; data: AppData; error?: undefined }
+  | { status: "error"; data?: undefined; error: string };
 
 const entityLabels: Record<EntityName, string> = {
   afdelingen: "Afdelingen",
@@ -183,6 +202,31 @@ function useAppData() {
   return { data, updateEntity, resetData };
 }
 
+function useMachinePhotoOverrides() {
+  const [photos, setPhotos] = useState<Record<string, string>>(() => {
+    if (typeof window === "undefined") return {};
+
+    const saved = window.localStorage.getItem(machinePhotoStorageKey);
+    if (!saved) return {};
+
+    try {
+      return JSON.parse(saved) as Record<string, string>;
+    } catch {
+      return {};
+    }
+  });
+
+  useEffect(() => {
+    window.localStorage.setItem(machinePhotoStorageKey, JSON.stringify(photos));
+  }, [photos]);
+
+  function updateMachinePhoto(machineId: string, photoUrl: string) {
+    setPhotos((current) => ({ ...current, [machineId]: photoUrl }));
+  }
+
+  return { photos, updateMachinePhoto };
+}
+
 function useMicrosoftAuth() {
   const [auth, setAuth] = useState<AuthState>({ status: "loading" });
 
@@ -225,7 +269,7 @@ function useMicrosoftAuth() {
   async function signIn() {
     if (!("msal" in auth) || !auth.msal) return;
     await auth.msal.loginRedirect({
-      scopes: ["User.Read"],
+      scopes: graphScopes,
     });
   }
 
@@ -238,6 +282,503 @@ function useMicrosoftAuth() {
   }
 
   return { auth, signIn, signOut };
+}
+
+async function graphFetch<T>(path: string, accessToken: string): Promise<T> {
+  const response = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Graph ${response.status}: ${body || response.statusText}`);
+  }
+
+  return response.json() as Promise<T>;
+}
+
+async function graphFetchRaw(path: string, accessToken: string, init: RequestInit) {
+  const headers = new Headers(init.headers);
+  headers.set("Authorization", `Bearer ${accessToken}`);
+
+  const response = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
+    ...init,
+    headers,
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Graph ${response.status}: ${body || response.statusText}`);
+  }
+
+  if (response.status === 204) return undefined;
+  return response.json() as Promise<unknown>;
+}
+
+async function getSharePointToken(msal: PublicClientApplication, account: AccountInfo) {
+  try {
+    const token = await msal.acquireTokenSilent({
+      account,
+      scopes: graphScopes,
+    });
+
+    return token.accessToken;
+  } catch (error) {
+    if (error instanceof InteractionRequiredAuthError) {
+      await msal.acquireTokenRedirect({
+        account,
+        scopes: graphScopes,
+      });
+    }
+
+    throw error;
+  }
+}
+
+function stringValue(fields: Record<string, unknown>, names: string[], fallback = "") {
+  for (const name of names) {
+    const value = fieldValue(fields, name);
+    if (typeof value === "string") return value;
+    if (typeof value === "number") return String(value);
+  }
+
+  return fallback;
+}
+
+function booleanValue(fields: Record<string, unknown>, names: string[], fallback = false) {
+  for (const name of names) {
+    const value = fieldValue(fields, name);
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number") return value === 1;
+    if (typeof value === "string") return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
+  }
+
+  return fallback;
+}
+
+function numberValue(fields: Record<string, unknown>, names: string[], fallback = 0) {
+  for (const name of names) {
+    const value = fieldValue(fields, name);
+    if (typeof value === "number") return value;
+    if (typeof value === "string" && value.trim()) return Number(value);
+  }
+
+  return fallback;
+}
+
+function dateValue(fields: Record<string, unknown>, names: string[]) {
+  const raw = stringValue(fields, names);
+  return raw ? raw.slice(0, 10) : "";
+}
+
+function normalizeFieldName(name: string) {
+  return name
+    .replace(/_x0020_/gi, "")
+    .replace(/[^a-z0-9]/gi, "")
+    .toLowerCase();
+}
+
+function fieldValue(fields: Record<string, unknown>, name: string) {
+  if (name in fields) return fields[name];
+
+  const normalizedName = normalizeFieldName(name);
+  const matchingKey = Object.keys(fields).find((key) => normalizeFieldName(key) === normalizedName);
+  return matchingKey ? fields[matchingKey] : undefined;
+}
+
+function lookupIdValue(fields: Record<string, unknown>, displayName: string) {
+  const compact = displayName.replace(/\s+/g, "");
+  const candidates = [
+    `${displayName}LookupId`,
+    `${compact}LookupId`,
+    `${displayName}Id`,
+    `${compact}Id`,
+  ];
+
+  for (const candidate of candidates) {
+    const value = fieldValue(fields, candidate);
+    if (typeof value === "number") return String(value);
+    if (typeof value === "string" && value.trim()) return value;
+  }
+
+  return "";
+}
+
+function choiceValue<T extends string>(value: string, allowed: readonly T[], fallback: T) {
+  return allowed.includes(value as T) ? (value as T) : fallback;
+}
+
+function idFromLookup(map: Map<string, string>, lookupId: string) {
+  return lookupId ? map.get(lookupId) ?? "" : "";
+}
+
+function sharePointItemIdFromAppId(id: string) {
+  return id.split("-").at(-1) ?? "";
+}
+
+function safeSharePointFileName(name: string) {
+  return name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[<>:"/\\|?*#%{}~&]/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80);
+}
+
+function fileExtension(file: File) {
+  const extension = file.name.split(".").pop();
+  if (extension && extension !== file.name) return extension.toLowerCase();
+  if (file.type === "image/png") return "png";
+  if (file.type === "image/webp") return "webp";
+  return "jpg";
+}
+
+function columnInternalName(columns: SharePointColumn[], displayName: string) {
+  const normalized = normalizeFieldName(displayName);
+  return columns.find((column) => normalizeFieldName(column.displayName ?? column.name ?? "") === normalized)?.name;
+}
+
+async function fetchListItems(
+  siteId: string,
+  lists: SharePointList[],
+  listName: string,
+  accessToken: string,
+  includeDriveItem = false,
+) {
+  const list = lists.find((item) => item.displayName === listName || item.name === listName);
+  if (!list) return [];
+
+  const result = await graphFetch<{ value: SharePointListItem[] }>(
+    `/sites/${siteId}/lists/${list.id}/items?$expand=${includeDriveItem ? "fields,driveItem" : "fields"}&$top=200`,
+    accessToken,
+  );
+
+  return result.value;
+}
+
+function mapSharePointData(items: {
+  afdelingen: SharePointListItem[];
+  personen: SharePointListItem[];
+  leveranciers: SharePointListItem[];
+  machines: SharePointListItem[];
+  onderhoud: SharePointListItem[];
+  storingen: SharePointListItem[];
+  documenten: SharePointListItem[];
+}): AppData {
+  const afdelingIds = new Map<string, string>();
+  const persoonIds = new Map<string, string>();
+  const leverancierIds = new Map<string, string>();
+  const machineIds = new Map<string, string>();
+
+  const afdelingen = items.afdelingen.map((item): Afdeling => {
+    const fields = item.fields ?? {};
+    const id = `sp-afdeling-${item.id}`;
+    afdelingIds.set(item.id, id);
+
+    return {
+      actief: booleanValue(fields, ["Actief"], true),
+      id,
+      omschrijving: stringValue(fields, ["Omschrijving"]),
+      title: stringValue(fields, ["Title", "Titel"], "Afdeling"),
+      volgorde: numberValue(fields, ["Volgorde"], 0),
+    };
+  });
+
+  const personen = items.personen.map((item): Persoon => {
+    const fields = item.fields ?? {};
+    const id = `sp-persoon-${item.id}`;
+    persoonIds.set(item.id, id);
+
+    return {
+      actief: booleanValue(fields, ["Actief"], true),
+      afdelingId: idFromLookup(afdelingIds, lookupIdValue(fields, "Afdeling")),
+      email: stringValue(fields, ["Email"]),
+      functie: stringValue(fields, ["Functie"]),
+      id,
+      title: stringValue(fields, ["Title", "Titel"], "Persoon"),
+    };
+  });
+
+  const leveranciers = items.leveranciers.map((item): Leverancier => {
+    const fields = item.fields ?? {};
+    const id = `sp-leverancier-${item.id}`;
+    leverancierIds.set(item.id, id);
+
+    return {
+      contactpersoon: stringValue(fields, ["Contactpersoon"]),
+      email: stringValue(fields, ["Email"]),
+      id,
+      opmerking: stringValue(fields, ["Opmerking"]),
+      telefoon: stringValue(fields, ["Telefoon"]),
+      title: stringValue(fields, ["Title", "Titel"], "Leverancier"),
+    };
+  });
+
+  const machines = items.machines.map((item): Machine => {
+    const fields = item.fields ?? {};
+    const id = `sp-machine-${item.id}`;
+    machineIds.set(item.id, id);
+
+    return {
+      aankoopdatum: dateValue(fields, ["Aankoopdatum"]),
+      actief: booleanValue(fields, ["Actief"], true),
+      afbeeldingUrl: stringValue(fields, ["AfbeeldingURL", "Afbeelding URL"]),
+      afdelingId: idFromLookup(afdelingIds, lookupIdValue(fields, "Afdeling")),
+      garantieVerloopdatum: dateValue(fields, ["Garantieverloopdatum", "Garantie verloopdatum"]),
+      id,
+      leverancierId: idFromLookup(leverancierIds, lookupIdValue(fields, "Leverancier")),
+      omschrijving: stringValue(fields, ["Omschrijving"]),
+      serieNummer: stringValue(fields, ["Serienummer", "Serie nummer"]),
+      status: choiceValue(stringValue(fields, ["Status"]), ["Operationeel", "Onderhoud nodig", "Buiten gebruik"], "Operationeel"),
+      title: stringValue(fields, ["Title", "Titel"], "Machine"),
+      verantwoordelijkeId: idFromLookup(persoonIds, lookupIdValue(fields, "Verantwoordelijke")),
+    };
+  });
+
+  const onderhoud = items.onderhoud.map((item): Onderhoud => {
+    const fields = item.fields ?? {};
+    const verantwoordelijkePersoonId = idFromLookup(persoonIds, lookupIdValue(fields, "Verantwoordelijke persoon"));
+    const verantwoordelijkeLeverancierId = idFromLookup(leverancierIds, lookupIdValue(fields, "Verantwoordelijke leverancier"));
+    const verantwoordelijkeType = verantwoordelijkeLeverancierId ? "Leverancier" : "Persoon";
+    const verantwoordelijkeRefId = verantwoordelijkeLeverancierId || verantwoordelijkePersoonId;
+
+    return {
+      datumGepland: dateValue(fields, ["Datumgepland", "Datum gepland"]),
+      datumUitgevoerd: dateValue(fields, ["Datumuitgevoerd", "Datum uitgevoerd"]),
+      herhaling: choiceValue(stringValue(fields, ["Herhaling"]), ["Geen", "Wekelijks", "Maandelijks", "Jaarlijks", "Eerste weekdag van de maand", "Eerste weekdag van het kwartaal"], "Geen"),
+      herhalingTot: dateValue(fields, ["Herhalentot", "Herhalen tot"]),
+      herhalingWeekdag: choiceValue(stringValue(fields, ["Herhalingweekdag", "Herhaling weekdag"]), weekdagen, "Maandag"),
+      id: `sp-onderhoud-${item.id}`,
+      leverancierId: verantwoordelijkeLeverancierId,
+      machineId: idFromLookup(machineIds, lookupIdValue(fields, "Machine")),
+      opmerking: stringValue(fields, ["Opmerking"]),
+      status: choiceValue(stringValue(fields, ["Status"]), ["Gepland", "In proces", "Voltooid"], "Gepland"),
+      title: stringValue(fields, ["Title", "Titel"], "Onderhoud"),
+      typeOnderhoud: choiceValue(stringValue(fields, ["Typeonderhoud", "Type onderhoud"]), ["Preventief", "Correctief", "Keuring", "Schoonmaak"], "Preventief"),
+      verantwoordelijkeId: verantwoordelijkePersoonId,
+      verantwoordelijkeRefId,
+      verantwoordelijkeType,
+    };
+  });
+
+  const storingen = items.storingen.map((item): StoringOpmerking => {
+    const fields = item.fields ?? {};
+
+    return {
+      datum: dateValue(fields, ["Datum"]),
+      id: `sp-storing-${item.id}`,
+      machineId: idFromLookup(machineIds, lookupIdValue(fields, "Machine")),
+      melderId: idFromLookup(persoonIds, lookupIdValue(fields, "Melder")),
+      omschrijving: stringValue(fields, ["Omschrijving"]),
+      oplossing: stringValue(fields, ["Oplossing"]),
+      prioriteit: choiceValue(stringValue(fields, ["Prioriteit"]), ["Laag", "Normaal", "Hoog"], "Normaal"),
+      status: choiceValue(stringValue(fields, ["Status"]), ["Open", "In behandeling", "Opgelost"], "Open"),
+      title: stringValue(fields, ["Title", "Titel"], "Melding"),
+      type: choiceValue(stringValue(fields, ["Meldingtype", "Melding type"]), ["Storing", "Opmerking", "Verbeterpunt"], "Storing"),
+    };
+  });
+
+  const documenten = items.documenten.map((item): MachineDocument => {
+    const fields = item.fields ?? {};
+    const url = item.driveItem?.webUrl ?? stringValue(fields, ["FileRef", "Link"]);
+
+    return {
+      actief: booleanValue(fields, ["Actief"], true),
+      documentType: choiceValue(stringValue(fields, ["Documenttype", "Document type"]), ["Handleiding", "Keuring", "Onderhoud", "Foto", "Overig"], "Overig"),
+      id: `sp-document-${item.id}`,
+      machineId: idFromLookup(machineIds, lookupIdValue(fields, "Machine")),
+      omschrijving: stringValue(fields, ["Omschrijving"]),
+      title: item.driveItem?.name ?? stringValue(fields, ["FileLeafRef", "Title", "Titel"], "Document"),
+      url,
+      vervaldatum: dateValue(fields, ["Vervaldatum"]),
+    };
+  });
+
+  return normalizeData({ afdelingen, documenten, leveranciers, machines, onderhoud, personen, storingen });
+}
+
+function useSharePointData(auth: AuthState) {
+  const [state, setState] = useState<SharePointState>({ status: "idle" });
+
+  useEffect(() => {
+    if (auth.status !== "signedIn") {
+      return;
+    }
+
+    const { account, msal } = auth;
+    let cancelled = false;
+
+    async function loadSharePointData() {
+      setState({ status: "loading" });
+
+      try {
+        const accessToken = await getSharePointToken(msal, account);
+        const site = await graphFetch<{ id: string }>(
+          `/sites/${sharePointHost}:${sharePointSitePath}`,
+          accessToken,
+        );
+        const lists = await graphFetch<{ value: SharePointList[] }>(
+          `/sites/${site.id}/lists?$select=id,displayName,name`,
+          accessToken,
+        );
+
+        const [
+          afdelingen,
+          personen,
+          leveranciers,
+          machines,
+          onderhoud,
+          storingen,
+          documenten,
+        ] = await Promise.all([
+          fetchListItems(site.id, lists.value, "Afdelingen", accessToken),
+          fetchListItems(site.id, lists.value, "Personen", accessToken),
+          fetchListItems(site.id, lists.value, "Leveranciers", accessToken),
+          fetchListItems(site.id, lists.value, "Machines", accessToken),
+          fetchListItems(site.id, lists.value, "Onderhoud", accessToken),
+          fetchListItems(site.id, lists.value, "Storingen Opmerkingen", accessToken),
+          fetchListItems(site.id, lists.value, "Machine documenten", accessToken, true),
+        ]);
+
+        if (!cancelled) {
+          setState({
+            data: mapSharePointData({
+              afdelingen,
+              documenten,
+              leveranciers,
+              machines,
+              onderhoud,
+              personen,
+              storingen,
+            }),
+            status: "ready",
+          });
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setState({
+            error: error instanceof Error ? error.message : "SharePoint-data laden is niet gelukt.",
+            status: "error",
+          });
+        }
+      }
+    }
+
+    loadSharePointData();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [auth]);
+
+  return state;
+}
+
+async function uploadMachinePhotoToSharePoint(
+  auth: AuthState,
+  machine: Machine,
+  file: File,
+): Promise<MachinePhotoUploadResult> {
+  if (auth.status !== "signedIn") {
+    throw new Error("Je moet ingelogd zijn om een foto naar SharePoint te uploaden.");
+  }
+
+  const accessToken = await getSharePointToken(auth.msal, auth.account);
+  const site = await graphFetch<{ id: string }>(
+    `/sites/${sharePointHost}:${sharePointSitePath}`,
+    accessToken,
+  );
+  const [lists, drives] = await Promise.all([
+    graphFetch<{ value: SharePointList[] }>(
+      `/sites/${site.id}/lists?$select=id,displayName,name`,
+      accessToken,
+    ),
+    graphFetch<{ value: SharePointDrive[] }>(
+      `/sites/${site.id}/drives?$select=id,name`,
+      accessToken,
+    ),
+  ]);
+
+  const documentLibrary = lists.value.find(
+    (list) => list.displayName === "Machine documenten" || list.name === "Machine documenten",
+  );
+  const drive = drives.value.find((item) => item.name === "Machine documenten");
+
+  if (!documentLibrary || !drive) {
+    throw new Error("Documentbibliotheek 'Machine documenten' is niet gevonden in SharePoint.");
+  }
+
+  const extension = fileExtension(file);
+  const fileName = `${safeSharePointFileName(machine.title || "machine")}-foto-${Date.now()}.${extension}`;
+  const uploaded = await graphFetchRaw(
+    `/sites/${site.id}/drives/${drive.id}/root:/${encodeURIComponent(fileName)}:/content`,
+    accessToken,
+    {
+      body: await file.arrayBuffer(),
+      headers: {
+        "Content-Type": file.type || "application/octet-stream",
+      },
+      method: "PUT",
+    },
+  ) as SharePointDriveItem;
+
+  let warning: string | undefined;
+
+  try {
+    const columns = await graphFetch<{ value: SharePointColumn[] }>(
+      `/sites/${site.id}/lists/${documentLibrary.id}/columns?$select=name,displayName`,
+      accessToken,
+    );
+    const fields: Record<string, string | boolean> = {};
+    const machineColumn = columnInternalName(columns.value, "Machine");
+    const documentTypeColumn = columnInternalName(columns.value, "Document type");
+    const omschrijvingColumn = columnInternalName(columns.value, "Omschrijving");
+    const actiefColumn = columnInternalName(columns.value, "Actief");
+    const machineItemId = sharePointItemIdFromAppId(machine.id);
+
+    if (machineColumn && machineItemId) fields[`${machineColumn}LookupId`] = machineItemId;
+    if (documentTypeColumn) fields[documentTypeColumn] = "Foto";
+    if (omschrijvingColumn) fields[omschrijvingColumn] = `Machinefoto voor ${machine.title}`;
+    if (actiefColumn) fields[actiefColumn] = true;
+
+    if (Object.keys(fields).length > 0) {
+      await graphFetchRaw(
+        `/sites/${site.id}/drives/${drive.id}/items/${uploaded.id}/listItem/fields`,
+        accessToken,
+        {
+          body: JSON.stringify(fields),
+          headers: {
+            "Content-Type": "application/json",
+          },
+          method: "PATCH",
+        },
+      );
+    }
+  } catch (error) {
+    warning = error instanceof Error
+      ? `Foto is geupload, maar metadata koppelen lukte nog niet: ${error.message}`
+      : "Foto is geupload, maar metadata koppelen lukte nog niet.";
+  }
+
+  return {
+    document: {
+      actief: true,
+      bestandNaam: uploaded.name ?? fileName,
+      bestandType: file.type || "image/jpeg",
+      documentType: "Foto",
+      id: createId("sp-photo"),
+      machineId: machine.id,
+      omschrijving: `Machinefoto voor ${machine.title}`,
+      title: uploaded.name ?? fileName,
+      url: uploaded.webUrl ?? "#",
+      vervaldatum: "",
+    },
+    warning,
+  };
 }
 
 async function fileToBijlage(file: File): Promise<Bijlage> {
@@ -259,7 +800,26 @@ async function fileToBijlage(file: File): Promise<Bijlage> {
 
 export default function Home() {
   const { auth, signIn, signOut } = useMicrosoftAuth();
-  const { data, updateEntity, resetData } = useAppData();
+  const { data: localData, updateEntity, resetData } = useAppData();
+  const { photos: machinePhotos, updateMachinePhoto } = useMachinePhotoOverrides();
+  const sharePointData = useSharePointData(auth);
+  const sourceData = sharePointData.status === "ready" ? sharePointData.data : localData;
+  const data = useMemo(
+    () => ({
+      ...sourceData,
+      machines: sourceData.machines.map((machine) => {
+        const documentPhoto = sourceData.documenten.find(
+          (document) => document.machineId === machine.id && document.documentType === "Foto" && document.actief && document.url,
+        );
+
+        return {
+          ...machine,
+          afbeeldingUrl: machinePhotos[machine.id] ?? machine.afbeeldingUrl ?? documentPhoto?.url ?? "",
+        };
+      }),
+    }),
+    [machinePhotos, sourceData],
+  );
   const [section, setSection] = useState<Section>("werkvloer");
   const [flowScreen, setFlowScreen] = useState<FlowScreen>("start");
   const [selectedAfdelingId, setSelectedAfdelingId] = useState("");
@@ -294,6 +854,13 @@ export default function Home() {
     setSelectedAfdelingId("");
     setSelectedPersoonId("");
     setSelectedMachineId("");
+  }
+
+  async function uploadMachinePhoto(machine: Machine, file: File) {
+    const result = await uploadMachinePhotoToSharePoint(auth, machine, file);
+    updateMachinePhoto(machine.id, result.document.url);
+    updateEntity("documenten", [result.document, ...data.documenten]);
+    return result;
   }
 
   if (auth.status === "loading") {
@@ -331,14 +898,14 @@ export default function Home() {
           <UserBadge account={auth.account} onSignOut={signOut} />
           <div className="navSwitch">
             <button
-              className={section === "werkvloer" ? "active" : ""}
+              className={section === "werkvloer" ? "smallButton topNavButton active" : "smallButton topNavButton"}
               onClick={goHome}
               type="button"
             >
               Werkvloer
             </button>
             <button
-              className={section === "beheer" ? "active" : ""}
+              className={section === "beheer" ? "smallButton topNavButton active" : "smallButton topNavButton"}
               onClick={() => setSection("beheer")}
               type="button"
             >
@@ -347,6 +914,8 @@ export default function Home() {
           </div>
         </div>
       </header>
+
+      <SharePointNotice state={sharePointData} />
 
       {section === "werkvloer" ? (
         <WerkvloerFlow
@@ -363,6 +932,7 @@ export default function Home() {
           setSelectedMachineId={setSelectedMachineId}
           setSelectedPersoonId={setSelectedPersoonId}
           updateDocumenten={(documenten) => updateEntity("documenten", documenten)}
+          uploadMachinePhoto={uploadMachinePhoto}
           updateOnderhoud={(onderhoud) => updateEntity("onderhoud", onderhoud)}
           updateStoringen={(storingen) => updateEntity("storingen", storingen)}
         />
@@ -456,6 +1026,7 @@ function WerkvloerFlow({
   setSelectedMachineId,
   setSelectedPersoonId,
   updateDocumenten,
+  uploadMachinePhoto,
   updateOnderhoud,
   updateStoringen,
 }: {
@@ -472,6 +1043,7 @@ function WerkvloerFlow({
   setSelectedMachineId: (id: string) => void;
   setSelectedPersoonId: (id: string) => void;
   updateDocumenten: (documenten: MachineDocument[]) => void;
+  uploadMachinePhoto: (machine: Machine, file: File) => Promise<MachinePhotoUploadResult>;
   updateOnderhoud: (onderhoud: Onderhoud[]) => void;
   updateStoringen: (storingen: StoringOpmerking[]) => void;
 }) {
@@ -549,6 +1121,20 @@ function WerkvloerFlow({
 
     updateDocumenten([document, ...data.documenten]);
     setSelectedDocumentId(document.id);
+  }
+
+  async function addMachinePhoto(formData: FormData) {
+    if (!selectedMachine) return;
+
+    const file = formData.get("machineFoto");
+    if (!(file instanceof File) || file.size === 0) return;
+
+    try {
+      const result = await uploadMachinePhoto(selectedMachine, file);
+      setSaveNotice(result.warning ?? "Machinefoto opgeslagen in SharePoint.");
+    } catch (error) {
+      setSaveNotice(error instanceof Error ? error.message : "Machinefoto uploaden naar SharePoint is niet gelukt.");
+    }
   }
 
   function editDocument(documentId: string, formData: FormData) {
@@ -755,7 +1341,9 @@ function WerkvloerFlow({
     return (
       <section className="mobileScreen">
         <ScreenHeader eyebrow={selectedAfdeling?.title ?? "Machine"} goHome={goHome} onBack={() => setFlowScreen(selectedPersoon ? "persoonMachines" : "machines")} title={selectedMachine.title} />
+        {saveNotice && <p className="saveNotice">{saveNotice}</p>}
         <div className="passportCard">
+          <MachinePhotoPanel machine={selectedMachine} onSubmit={addMachinePhoto} />
           <span className={`statusPill ${selectedMachine.status === "Operationeel" ? "good" : "alert"}`}>{selectedMachine.status}</span>
           <p>{selectedMachine.omschrijving}</p>
           <dl className="passportMeta">
@@ -832,10 +1420,38 @@ function WerkvloerFlow({
   );
 }
 
+function SharePointNotice({ state }: { state: SharePointState }) {
+  if (state.status === "idle") return null;
+
+  if (state.status === "loading") {
+    return (
+      <p className="dataNotice loading">
+        SharePoint-data wordt geladen...
+      </p>
+    );
+  }
+
+  if (state.status === "error") {
+    return (
+      <p className="dataNotice error">
+        SharePoint-data kon niet geladen worden. De app toont nu lokale testdata. Fout: {state.error}
+      </p>
+    );
+  }
+
+  return (
+    <p className="dataNotice ready">
+      <strong>SharePoint actief</strong>
+      <span>Data wordt gelezen uit SharePoint.</span>
+    </p>
+  );
+}
+
 function PilotNotice() {
   return (
     <p className="pilotNotice">
-      Pilotversie met lokale testdata. Nieuwe meldingen en wijzigingen worden nu nog per apparaat/browser bewaard.
+      <strong>Appversie V1 pilot</strong>
+      <span>Lezen uit SharePoint is actief. Nieuwe meldingen en wijzigingen worden in deze stap nog per apparaat/browser bewaard.</span>
     </p>
   );
 }
@@ -862,14 +1478,58 @@ function ActionButton({ icon, label, onClick, tone = "dark" }: { icon: IconName;
   );
 }
 
+function MachinePhotoPanel({ machine, onSubmit }: { machine: Machine; onSubmit: (formData: FormData) => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    setBusy(true);
+    await onSubmit(new FormData(form));
+    form.reset();
+    setBusy(false);
+  }
+
+  return (
+    <section className="machinePhotoPanel">
+      {machine.afbeeldingUrl ? (
+        <Image
+          alt={`Foto van ${machine.title}`}
+          className="machinePhoto"
+          height={320}
+          src={machine.afbeeldingUrl}
+          unoptimized
+          width={640}
+        />
+      ) : (
+        <div className="machinePhotoPlaceholder">
+          <LineIcon name="camera" />
+          <span>Nog geen machinefoto</span>
+        </div>
+      )}
+      <form className="machinePhotoForm" onSubmit={handleSubmit}>
+        <label className="fileBox">
+          <LineIcon name="camera" />
+          Foto toevoegen
+          <input accept="image/*" capture="environment" name="machineFoto" type="file" />
+        </label>
+        <button className="smallButton" disabled={busy} type="submit">
+          {busy ? "Opslaan..." : "Foto opslaan"}
+        </button>
+      </form>
+    </section>
+  );
+}
+
 function DocumentUploadForm({ onSubmit }: { onSubmit: (formData: FormData) => Promise<void> }) {
   const [busy, setBusy] = useState(false);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const form = event.currentTarget;
     setBusy(true);
-    await onSubmit(new FormData(event.currentTarget));
-    event.currentTarget.reset();
+    await onSubmit(new FormData(form));
+    form.reset();
     setBusy(false);
   }
 
@@ -1036,8 +1696,9 @@ function OnderhoudForm({
 }) {
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    onSubmit(new FormData(event.currentTarget));
-    if (mode === "create") event.currentTarget.reset();
+    const form = event.currentTarget;
+    onSubmit(new FormData(form));
+    if (mode === "create") form.reset();
   }
 
   return (
@@ -1123,9 +1784,10 @@ function StoringForm({ onSubmit }: { onSubmit: (formData: FormData) => Promise<v
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const form = event.currentTarget;
     setBusy(true);
-    await onSubmit(new FormData(event.currentTarget));
-    event.currentTarget.reset();
+    await onSubmit(new FormData(form));
+    form.reset();
     setBusy(false);
   }
 
@@ -1153,7 +1815,8 @@ function DocumentDetail({
 }) {
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    onSubmit(new FormData(event.currentTarget));
+    const form = event.currentTarget;
+    onSubmit(new FormData(form));
   }
 
   const documentUrl = document.bestandDataUrl || document.url;
@@ -1165,12 +1828,17 @@ function DocumentDetail({
       <section className="documentPreview">
         <h2><LineIcon name="document" /> {document.title}</h2>
         {canPreview ? (
-          <>
-            <iframe className="documentFrame" src={documentUrl} title={document.title} />
-            <a className="fileLink" href={documentUrl} target="_blank" rel="noreferrer">
-              Open in nieuw venster
+          <div className="documentOpenCard">
+            <LineIcon name="document" />
+            <div>
+              <strong>{document.title}</strong>
+              <p>{document.documentType} - {document.omschrijving || "Geen omschrijving"}</p>
+              {document.vervaldatum && <small>Vervaldatum: {document.vervaldatum}</small>}
+            </div>
+            <a className="submitButton gold" href={documentUrl} target="_blank" rel="noreferrer">
+              Openen in SharePoint
             </a>
-          </>
+          </div>
         ) : (
           <p className="emptyState">Dit testdocument heeft nog geen gekoppeld bestand.</p>
         )}
