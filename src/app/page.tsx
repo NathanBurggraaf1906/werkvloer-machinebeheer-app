@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import Image from "next/image";
+import { AccountInfo, PublicClientApplication } from "@azure/msal-browser";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { initialData } from "@/lib/seed-data";
 import type {
@@ -18,6 +19,8 @@ import type {
 } from "@/lib/types";
 
 const storageKey = "werkvloer-machinebeheer-v1";
+const microsoftClientId = "0d1f2e04-7363-408c-8d69-26516c6f1e98";
+const microsoftTenantId = "568c87e9-d6ed-4409-acab-1251c4d47545";
 
 type Section = "werkvloer" | "beheer";
 type FlowScreen =
@@ -31,6 +34,11 @@ type FlowScreen =
   | "onderhoud"
   | "storingen";
 type IconName = "home" | "department" | "person" | "machine" | "document" | "maintenance" | "alert" | "camera" | "plus" | "back" | "spark";
+type AuthState =
+  | { status: "loading"; msal?: PublicClientApplication }
+  | { status: "signedOut"; msal: PublicClientApplication }
+  | { status: "signedIn"; account: AccountInfo; msal: PublicClientApplication }
+  | { status: "error"; error: string; msal?: PublicClientApplication };
 
 const entityLabels: Record<EntityName, string> = {
   afdelingen: "Afdelingen",
@@ -61,6 +69,20 @@ const weekdagen: Weekdag[] = [
   "Zaterdag",
   "Zondag",
 ];
+
+function createMicrosoftClient() {
+  return new PublicClientApplication({
+    auth: {
+      authority: `https://login.microsoftonline.com/${microsoftTenantId}`,
+      clientId: microsoftClientId,
+      postLogoutRedirectUri: window.location.origin,
+      redirectUri: window.location.origin,
+    },
+    cache: {
+      cacheLocation: "localStorage",
+    },
+  });
+}
 
 function createId(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random()
@@ -161,6 +183,63 @@ function useAppData() {
   return { data, updateEntity, resetData };
 }
 
+function useMicrosoftAuth() {
+  const [auth, setAuth] = useState<AuthState>({ status: "loading" });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function initializeAuth() {
+      try {
+        const msal = createMicrosoftClient();
+        await msal.initialize();
+        const redirectResult = await msal.handleRedirectPromise();
+        const account =
+          redirectResult?.account ?? msal.getActiveAccount() ?? msal.getAllAccounts()[0];
+
+        if (cancelled) return;
+
+        if (account) {
+          msal.setActiveAccount(account);
+          setAuth({ account, msal, status: "signedIn" });
+        } else {
+          setAuth({ msal, status: "signedOut" });
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setAuth({
+            error: error instanceof Error ? error.message : "Aanmelden is niet gelukt.",
+            status: "error",
+          });
+        }
+      }
+    }
+
+    initializeAuth();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function signIn() {
+    if (!("msal" in auth) || !auth.msal) return;
+    await auth.msal.loginRedirect({
+      scopes: ["User.Read"],
+    });
+  }
+
+  async function signOut() {
+    if (!("msal" in auth) || !auth.msal) return;
+    await auth.msal.logoutRedirect({
+      account: auth.status === "signedIn" ? auth.account : undefined,
+      postLogoutRedirectUri: window.location.origin,
+    });
+  }
+
+  return { auth, signIn, signOut };
+}
+
 async function fileToBijlage(file: File): Promise<Bijlage> {
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -179,6 +258,7 @@ async function fileToBijlage(file: File): Promise<Bijlage> {
 }
 
 export default function Home() {
+  const { auth, signIn, signOut } = useMicrosoftAuth();
   const { data, updateEntity, resetData } = useAppData();
   const [section, setSection] = useState<Section>("werkvloer");
   const [flowScreen, setFlowScreen] = useState<FlowScreen>("start");
@@ -216,6 +296,18 @@ export default function Home() {
     setSelectedMachineId("");
   }
 
+  if (auth.status === "loading") {
+    return <AuthShell message="Microsoft-login laden..." />;
+  }
+
+  if (auth.status === "signedOut") {
+    return <LoginScreen onSignIn={signIn} />;
+  }
+
+  if (auth.status === "error") {
+    return <LoginScreen error={auth.error} onSignIn={signIn} />;
+  }
+
   return (
     <main className="appShell">
       <header className="topbar">
@@ -236,6 +328,7 @@ export default function Home() {
           </button>
         </div>
         <div className="topActions" aria-label="Hoofdnavigatie">
+          <UserBadge account={auth.account} onSignOut={signOut} />
           <div className="navSwitch">
             <button
               className={section === "werkvloer" ? "active" : ""}
@@ -283,6 +376,69 @@ export default function Home() {
         />
       )}
     </main>
+  );
+}
+
+function AuthShell({ message }: { message: string }) {
+  return (
+    <main className="appShell authShell">
+      <section className="loginCard">
+        <Image
+          alt="1906 makers van charcuterie"
+          className="loginLogo"
+          height={104}
+          priority
+          src="/brand/1906-round-logo.jpg"
+          width={104}
+        />
+        <p className="eyebrow">Werkvloer Machinebeheer</p>
+        <h1>{message}</h1>
+      </section>
+    </main>
+  );
+}
+
+function LoginScreen({ error, onSignIn }: { error?: string; onSignIn: () => void }) {
+  return (
+    <main className="appShell authShell">
+      <section className="loginCard">
+        <Image
+          alt="1906 makers van charcuterie"
+          className="loginLogo"
+          height={112}
+          priority
+          src="/brand/1906-round-logo.jpg"
+          width={112}
+        />
+        <p className="eyebrow">Beveiligde werkvloer-app</p>
+        <h1>Log in met Microsoft.</h1>
+        <p>
+          Alleen gebruikers uit de Microsoft 365-omgeving van 1906 makers van
+          charcuterie kunnen deze pilot openen.
+        </p>
+        {error && <p className="authError">{error}</p>}
+        <button className="submitButton red" onClick={onSignIn} type="button">
+          <LineIcon name="person" />
+          Aanmelden met Microsoft
+        </button>
+      </section>
+    </main>
+  );
+}
+
+function UserBadge({ account, onSignOut }: { account: AccountInfo; onSignOut: () => void }) {
+  const displayName = account.name || account.username;
+
+  return (
+    <div className="userBadge">
+      <span>
+        <small>Ingelogd</small>
+        <strong>{displayName}</strong>
+      </span>
+      <button className="logoutButton" onClick={onSignOut} type="button">
+        Afmelden
+      </button>
+    </div>
   );
 }
 
