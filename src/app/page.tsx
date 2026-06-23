@@ -322,6 +322,7 @@ function WerkvloerFlow({
   const [selectedDocumentId, setSelectedDocumentId] = useState("");
   const [editingOnderhoudId, setEditingOnderhoudId] = useState("");
   const [maintenanceFilter, setMaintenanceFilter] = useState("all");
+  const [saveNotice, setSaveNotice] = useState("");
   const machineDocuments = data.documenten.filter(
     (document) => document.machineId === selectedMachine?.id && document.actief,
   );
@@ -483,11 +484,13 @@ function WerkvloerFlow({
     };
 
     updateStoringen([melding, ...data.storingen]);
+    setSaveNotice("Melding opgeslagen op dit apparaat. In de volgende fase koppelen we dit aan gedeelde SharePoint-data.");
   }
 
   if (flowScreen === "start") {
     return (
       <section className="mobileScreen heroScreen">
+        <PilotNotice />
         <div className="heroCopy">
           <p className="eyebrow">Mobiele werkvloer-app</p>
           <h1>Machinebeheer zonder omwegen.</h1>
@@ -666,9 +669,18 @@ function WerkvloerFlow({
         onBack={() => (selectedMachine ? setFlowScreen("paspoort") : setFlowScreen("start"))}
         title="Storingen / opmerkingen"
       />
+      {saveNotice && <p className="saveNotice">{saveNotice}</p>}
       {selectedMachine && <StoringForm onSubmit={addStoring} />}
       <StoringList storingen={selectedMachine ? machineStoringen : data.storingen} />
     </section>
+  );
+}
+
+function PilotNotice() {
+  return (
+    <p className="pilotNotice">
+      Pilotversie met lokale testdata. Nieuwe meldingen en wijzigingen worden nu nog per apparaat/browser bewaard.
+    </p>
   );
 }
 
@@ -1140,6 +1152,7 @@ function BeheerView({
             <h2>Beheer</h2>
           </div>
         </div>
+        <PilotNotice />
         <div className="buttonList compact">
           {entityOrder.map((entity) => (
             <button className={entity === activeEntity ? "choice active" : "choice"} key={entity} onClick={() => setActiveEntity(entity)} type="button">

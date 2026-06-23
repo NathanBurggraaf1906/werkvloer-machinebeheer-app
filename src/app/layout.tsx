@@ -74,6 +74,19 @@ export default function RootLayout({
                 border: 2px solid #a29061 !important;
                 color: #000 !important;
               }
+              @media (max-width: 680px) {
+                .topbar {
+                  background: #fffdf8 !important;
+                }
+                .brandZone {
+                  background: #000 !important;
+                }
+                .homeInBrand {
+                  background: #000 !important;
+                  border-color: #a29061 !important;
+                  color: #fff !important;
+                }
+              }
             `,
           }}
         />

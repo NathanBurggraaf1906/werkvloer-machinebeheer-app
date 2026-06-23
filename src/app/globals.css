@@ -74,6 +74,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .heroCopy h1, .screenHeader h1 { color: var(--black); font-size: 44px; line-height: .98; margin-bottom: 14px; }
 .heroCopy p { color: var(--muted); font-size: 19px; line-height: 1.45; }
 .heroActions { align-self: start; display: grid; gap: 14px; margin-top: 0; max-width: 620px; width: 100%; }
+.pilotNotice, .saveNotice { background: var(--red-pale); border: 1px solid rgba(225,6,0,.25); border-left: 6px solid var(--red); border-radius: 8px; color: var(--black); font-size: 15px; line-height: 1.35; padding: 12px 14px; }
+.pilotNotice { width: 100%; }
+.saveNotice { margin-bottom: 14px; }
 
 .actionButton, .submitButton, .primaryButton, .ghostButton, .smallButton, .iconButton {
   align-items: center; border-radius: 8px; display: inline-flex; gap: 10px; font-weight: 700; justify-content: center; min-height: 50px; padding: 0 18px; text-decoration: none;
@@ -188,17 +191,23 @@ td input[type="checkbox"] { min-height: 22px; width: 22px; }
 
 @media (max-width: 1080px) { .beheerLayout { grid-template-columns: 1fr; } }
 @media (max-width: 680px) {
-  .appShell { padding: 14px; }
-  .topbar { align-items: stretch; display: grid; }
-  .brandZone { min-width: 0; }
-  .topActions { display: grid; }
+  .appShell { padding: 10px; }
+  .appShell::before { left: 10px; right: 10px; }
+  .topbar { align-items: stretch; background: var(--panel); display: grid; gap: 8px; margin-bottom: 14px; padding: 8px; }
+  .brandZone { background: var(--black); border-radius: 6px; justify-content: space-between; min-height: 0; min-width: 0; padding: 8px; }
+  .homeInBrand { min-height: 40px; padding: 0 12px; }
+  .topActions { display: grid; width: 100%; }
   .brandButton strong { font-size: 20px; }
-  .brandLogo { height: 62px; width: 62px; }
+  .brandLogo { height: 56px; width: 56px; }
   .appTitle { display: none; }
   .brandMark { height: 50px; width: 50px; }
-  .navSwitch { grid-template-columns: repeat(2, 1fr); }
-  .mobileScreen { min-height: calc(100vh - 178px); padding: 18px; }
-  .heroCopy h1, .screenHeader h1 { font-size: 34px; }
+  .navSwitch { grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
+  .navSwitch button { min-height: 40px; padding: 0 8px; }
+  .mobileScreen { min-height: calc(100vh - 150px); padding: 16px 14px 96px; }
+  .heroScreen { gap: 18px; min-height: calc(100vh - 150px); }
+  .heroCopy { padding: 18px 14px; }
+  .heroCopy h1, .screenHeader h1 { font-size: 32px; }
+  .heroCopy p { font-size: 17px; }
   .screenHeader { grid-template-columns: 1fr; }
   .homeSmall { justify-self: start; }
   .passportMeta, .actionGrid { grid-template-columns: 1fr; }
