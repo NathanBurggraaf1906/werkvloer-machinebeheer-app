@@ -32,7 +32,7 @@ export default function RootLayout({
                   linear-gradient(180deg, #fff3f1, #f7f4ed 420px) !important;
               }
               .topbar {
-                background: linear-gradient(90deg, #000 0 42%, #fffdf8 42% 100%) !important;
+                background: #fffdf8 !important;
                 border: 2px solid #a29061 !important;
                 border-bottom: 6px solid #a29061 !important;
               }
@@ -95,12 +95,10 @@ export default function RootLayout({
                   background: #fffdf8 !important;
                 }
                 .brandZone {
-                  background: #000 !important;
+                  background: transparent !important;
                 }
                 .homeInBrand {
-                  background: #fff !important;
-                  border-color: #a29061 !important;
-                  color: #000 !important;
+                  display: none !important;
                 }
               }
             `,

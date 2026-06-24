@@ -40,6 +40,8 @@ type FlowScreen =
   | "paspoort"
   | "documenten"
   | "onderhoud"
+  | "onderhoudAgenda"
+  | "onderhoudDetail"
   | "storingen";
 type IconName = "home" | "department" | "person" | "machine" | "document" | "maintenance" | "alert" | "camera" | "plus" | "back" | "spark";
 type AuthState =
@@ -415,6 +417,10 @@ function idFromLookup(map: Map<string, string>, lookupId: string) {
   return lookupId ? map.get(lookupId) ?? "" : "";
 }
 
+function idFromLookupTitle(map: Map<string, string>, lookupTitle: string) {
+  return lookupTitle ? map.get(normalizeFieldName(lookupTitle)) ?? "" : "";
+}
+
 function sharePointItemIdFromAppId(id: string) {
   return id.split("-").at(-1) ?? "";
 }
@@ -539,6 +545,7 @@ function mapSharePointData(items: {
       verantwoordelijkeId: idFromLookup(persoonIds, lookupIdValue(fields, "Verantwoordelijke")),
     };
   });
+  const machineTitleIds = new Map(machines.map((machine) => [normalizeFieldName(machine.title), machine.id]));
 
   const onderhoud = items.onderhoud.map((item): Onderhoud => {
     const fields = item.fields ?? {};
@@ -591,7 +598,9 @@ function mapSharePointData(items: {
       actief: booleanValue(fields, ["Actief"], true),
       documentType: choiceValue(stringValue(fields, ["Documenttype", "Document type"]), ["Handleiding", "Keuring", "Onderhoud", "Foto", "Overig"], "Overig"),
       id: `sp-document-${item.id}`,
-      machineId: idFromLookup(machineIds, lookupIdValue(fields, "Machine")),
+      machineId:
+        idFromLookup(machineIds, lookupIdValue(fields, "Machine")) ||
+        idFromLookupTitle(machineTitleIds, stringValue(fields, ["Machine"])),
       omschrijving: stringValue(fields, ["Omschrijving"]),
       title: item.driveItem?.name ?? stringValue(fields, ["FileLeafRef", "Title", "Titel"], "Document"),
       url,
@@ -1129,6 +1138,7 @@ function WerkvloerFlow({
   const [selectedDocumentId, setSelectedDocumentId] = useState("");
   const [editingOnderhoudId, setEditingOnderhoudId] = useState("");
   const [maintenanceFilter, setMaintenanceFilter] = useState("all");
+  const [maintenanceStatusFilter, setMaintenanceStatusFilter] = useState("all");
   const [saveNotice, setSaveNotice] = useState("");
   const machineDocuments = data.documenten.filter(
     (document) => document.machineId === selectedMachine?.id && document.actief,
@@ -1251,7 +1261,7 @@ function WerkvloerFlow({
 
   function addOnderhoud(formData: FormData) {
     if (!selectedMachine) return;
-    const responsible = parseResponsibleValue(String(formData.get("verantwoordelijke") || `Persoon:${data.personen[0]?.id ?? ""}`));
+    const responsible = parseResponsibleValue(String(formData.get("verantwoordelijke") || `Persoon:${selectedMachine.verantwoordelijkeId || data.personen[0]?.id || ""}`));
 
     const taak: Onderhoud = {
       id: createId("ond"),
@@ -1272,7 +1282,8 @@ function WerkvloerFlow({
     };
 
     updateOnderhoud([taak, ...data.onderhoud]);
-    setEditingOnderhoudId(taak.id);
+    setEditingOnderhoudId("");
+    setFlowScreen("onderhoud");
   }
 
   function editOnderhoud(taakId: string, formData: FormData) {
@@ -1299,6 +1310,56 @@ function WerkvloerFlow({
     );
 
     updateOnderhoud(bijgewerkt);
+    setEditingOnderhoudId("");
+    setFlowScreen("onderhoud");
+  }
+
+  function updateOnderhoudStatus(taakId: string, status: Onderhoud["status"]) {
+    const vandaag = getTodayValue();
+    const bijgewerkt = data.onderhoud.map((taak) =>
+      taak.id === taakId
+        ? {
+            ...taak,
+            datumUitgevoerd: status === "Voltooid" ? taak.datumUitgevoerd || vandaag : taak.datumUitgevoerd,
+            status,
+          }
+        : taak,
+    );
+
+    updateOnderhoud(bijgewerkt);
+  }
+
+  function completeOnderhoud(taakId: string) {
+    updateOnderhoudStatus(taakId, "Voltooid");
+  }
+
+  function rescheduleOnderhoud(taak: Onderhoud) {
+    if (!selectedMachine) return;
+
+    const nextDate = getNextOnderhoudDate(taak);
+    const nieuweTaak: Onderhoud = {
+      ...taak,
+      datumGepland: nextDate,
+      datumUitgevoerd: "",
+      id: createId("ond"),
+      machineId: selectedMachine.id,
+      status: "Gepland",
+      title: `${taak.title} - vervolg`,
+    };
+
+    updateOnderhoud([nieuweTaak, ...data.onderhoud]);
+    setEditingOnderhoudId(nieuweTaak.id);
+    setFlowScreen("onderhoudDetail");
+  }
+
+  function openOnderhoudDetail(taakId: string) {
+    setEditingOnderhoudId(taakId);
+    setFlowScreen("onderhoudDetail");
+  }
+
+  function openNewOnderhoud() {
+    setEditingOnderhoudId("");
+    setFlowScreen("onderhoudDetail");
   }
 
   async function addStoring(formData: FormData) {
@@ -1439,25 +1500,34 @@ function WerkvloerFlow({
         {saveNotice && <p className="saveNotice">{saveNotice}</p>}
         <div className="passportCard">
           <MachinePhotoPanel machine={selectedMachine} onSubmit={addMachinePhoto} />
-          <span className={`statusPill ${selectedMachine.status === "Operationeel" ? "good" : "alert"}`}>{selectedMachine.status}</span>
-          <p>{selectedMachine.omschrijving}</p>
-          <MachinePassportEditForm
-            machine={selectedMachine}
-            onSubmit={editMachinePassport}
-            personen={activePersonen}
-          />
-          <dl className="passportMeta">
-            <div><dt>Serie</dt><dd>{selectedMachine.serieNummer}</dd></div>
-            <div><dt>Verantwoordelijke</dt><dd>{verantwoordelijke?.title ?? "-"}</dd></div>
-            <div><dt>Leverancier</dt><dd>{leverancier?.title ?? "-"}</dd></div>
-            <div><dt>Garantie</dt><dd>{selectedMachine.garantieVerloopdatum || "-"}</dd></div>
-          </dl>
+          <section className="passportSection">
+            <h2 className="sectionTitleBar"><LineIcon name="person" /> Status & verantwoordelijke</h2>
+            <span className={`statusPill ${selectedMachine.status === "Operationeel" ? "good" : "alert"}`}>{selectedMachine.status}</span>
+            <p>{selectedMachine.omschrijving}</p>
+            <MachinePassportEditForm
+              machine={selectedMachine}
+              onSubmit={editMachinePassport}
+              personen={activePersonen}
+            />
+          </section>
+          <section className="passportSection">
+            <h2 className="sectionTitleBar"><LineIcon name="machine" /> Machinegegevens</h2>
+            <dl className="passportMeta">
+              <div><dt>Serie</dt><dd>{selectedMachine.serieNummer}</dd></div>
+              <div><dt>Verantwoordelijke</dt><dd>{verantwoordelijke?.title ?? "-"}</dd></div>
+              <div><dt>Leverancier</dt><dd>{leverancier?.title ?? "-"}</dd></div>
+              <div><dt>Garantie</dt><dd>{selectedMachine.garantieVerloopdatum || "-"}</dd></div>
+            </dl>
+          </section>
         </div>
-        <div className="actionGrid">
+        <section className="passportSection actionSection">
+          <h2 className="sectionTitleBar"><LineIcon name="spark" /> Acties</h2>
+          <div className="actionGrid">
           <ActionButton icon="document" label="Documenten" onClick={() => setFlowScreen("documenten")} />
           <ActionButton icon="maintenance" label="Onderhoud" onClick={() => setFlowScreen("onderhoud")} tone="gold" />
           <ActionButton icon="alert" label="Storingen" onClick={() => setFlowScreen("storingen")} tone="red" />
-        </div>
+          </div>
+        </section>
         <MachineAiTool machine={selectedMachine} storingen={machineStoringen} />
       </section>
     );
@@ -1489,16 +1559,59 @@ function WerkvloerFlow({
         <ScreenHeader eyebrow={selectedMachine?.title ?? "Machine"} goHome={goHome} onBack={() => setFlowScreen("paspoort")} title="Onderhoud" />
         {selectedMachine && (
           <OnderhoudPanel
+            machine={selectedMachine}
             onderhoud={machineOnderhoud}
             personen={data.personen}
             leveranciers={data.leveranciers}
-            editingTaak={editingOnderhoud?.machineId === selectedMachine.id ? editingOnderhoud : undefined}
+            verantwoordelijke={verantwoordelijke}
+            onComplete={completeOnderhoud}
+            onCreate={openNewOnderhoud}
+            onOpenAgenda={() => setFlowScreen("onderhoudAgenda")}
+            onOpenTask={openOnderhoudDetail}
+          />
+        )}
+      </section>
+    );
+  }
+
+  if (flowScreen === "onderhoudAgenda") {
+    return (
+      <section className="mobileScreen">
+        <ScreenHeader eyebrow={selectedMachine?.title ?? "Machine"} goHome={goHome} onBack={() => setFlowScreen("onderhoud")} title="Onderhoud agenda" />
+        {selectedMachine && (
+          <OnderhoudAgendaView
             filterValue={maintenanceFilter}
+            leveranciers={data.leveranciers}
+            onderhoud={machineOnderhoud}
+            onComplete={completeOnderhoud}
+            onCreate={openNewOnderhoud}
+            onFilterChange={setMaintenanceFilter}
+            onOpenTask={openOnderhoudDetail}
+            onStatusFilterChange={setMaintenanceStatusFilter}
+            personen={data.personen}
+            statusFilter={maintenanceStatusFilter}
+          />
+        )}
+      </section>
+    );
+  }
+
+  if (flowScreen === "onderhoudDetail") {
+    return (
+      <section className="mobileScreen">
+        <ScreenHeader eyebrow={selectedMachine?.title ?? "Machine"} goHome={goHome} onBack={() => setFlowScreen("onderhoud")} title={editingOnderhoud ? "Onderhoudstaak" : "Nieuwe onderhoudstaak"} />
+        {selectedMachine && (
+          <OnderhoudDetailView
+            defaultResponsibleId={selectedMachine.verantwoordelijkeId}
+            leveranciers={data.leveranciers}
+            onCancel={() => setFlowScreen("onderhoud")}
+            onComplete={completeOnderhoud}
             onCreate={addOnderhoud}
             onEdit={editOnderhoud}
-            onFilterChange={setMaintenanceFilter}
-            onSelectEdit={setEditingOnderhoudId}
-            onStopEdit={() => setEditingOnderhoudId("")}
+            onReschedule={rescheduleOnderhoud}
+            onStart={(taakId) => updateOnderhoudStatus(taakId, "In proces")}
+            personen={data.personen}
+            taak={editingOnderhoud?.machineId === selectedMachine.id ? editingOnderhoud : undefined}
           />
         )}
       </section>
@@ -1592,6 +1705,7 @@ function MachinePhotoPanel({ machine, onSubmit }: { machine: Machine; onSubmit: 
 
   return (
     <section className="machinePhotoPanel">
+      <h2 className="sectionTitleBar"><LineIcon name="camera" /> Machinefoto</h2>
       {machine.afbeeldingUrl ? (
         <Image
           alt={`Foto van ${machine.title}`}
@@ -1692,85 +1806,177 @@ function DocumentUploadForm({ onSubmit }: { onSubmit: (formData: FormData) => Pr
   );
 }
 
-function getOnderhoudAgendaItems(onderhoud: Onderhoud[]) {
-  const items: Array<{ id: string; datum: string; title: string; status: Onderhoud["status"]; herhaling: Onderhoud["herhaling"] }> = [];
+function getTodayValue() {
+  return new Date().toISOString().slice(0, 10);
+}
 
-  for (const taak of onderhoud) {
-    if (!taak.datumGepland) continue;
+function isOnderhoudAchterstallig(taak: Onderhoud) {
+  return Boolean(taak.datumGepland && taak.datumGepland < getTodayValue() && taak.status !== "Voltooid");
+}
 
-    const start = new Date(`${taak.datumGepland}T00:00:00`);
-    const eind = taak.herhalingTot ? new Date(`${taak.herhalingTot}T00:00:00`) : undefined;
-    const maxItems = taak.herhaling === "Geen" ? 1 : 6;
+function getOnderhoudDisplayStatus(taak: Onderhoud) {
+  return isOnderhoudAchterstallig(taak) ? "Achterstallig" : taak.status;
+}
 
-    for (let index = 0; index < maxItems; index += 1) {
-      const datum = new Date(start);
+function getNextOnderhoudDate(taak: Onderhoud) {
+  const basisDatum = taak.datumGepland || getTodayValue();
+  const start = new Date(`${basisDatum}T00:00:00`);
 
-      if (taak.herhaling === "Wekelijks") datum.setDate(start.getDate() + index * 7);
-      if (taak.herhaling === "Maandelijks") datum.setMonth(start.getMonth() + index);
-      if (taak.herhaling === "Jaarlijks") datum.setFullYear(start.getFullYear() + index);
-      if (taak.herhaling === "Eerste weekdag van de maand") {
-        datum.setTime(getFirstWeekdayDate(start.getFullYear(), start.getMonth() + index, taak.herhalingWeekdag ?? "Maandag").getTime());
-      }
-      if (taak.herhaling === "Eerste weekdag van het kwartaal") {
-        const startKwartaalMaand = Math.floor(start.getMonth() / 3) * 3;
-        datum.setTime(getFirstWeekdayDate(start.getFullYear(), startKwartaalMaand + index * 3, taak.herhalingWeekdag ?? "Maandag").getTime());
-      }
-
-      if (eind && datum > eind) break;
-
-      items.push({
-        id: `${taak.id}-${index}`,
-        datum: datum.toISOString().slice(0, 10),
-        herhaling: taak.herhaling,
-        status: taak.status,
-        title: taak.title,
-      });
-    }
+  if (taak.herhaling === "Wekelijks") start.setDate(start.getDate() + 7);
+  if (taak.herhaling === "Maandelijks") start.setMonth(start.getMonth() + 1);
+  if (taak.herhaling === "Jaarlijks") start.setFullYear(start.getFullYear() + 1);
+  if (taak.herhaling === "Eerste weekdag van de maand") {
+    start.setMonth(start.getMonth() + 1);
+    return getFirstWeekdayDate(start.getFullYear(), start.getMonth(), taak.herhalingWeekdag).toISOString().slice(0, 10);
   }
+  if (taak.herhaling === "Eerste weekdag van het kwartaal") {
+    start.setMonth(start.getMonth() + 3);
+    const kwartaalMaand = Math.floor(start.getMonth() / 3) * 3;
+    return getFirstWeekdayDate(start.getFullYear(), kwartaalMaand, taak.herhalingWeekdag).toISOString().slice(0, 10);
+  }
+  if (taak.herhaling === "Geen") start.setDate(start.getDate() + 7);
 
-  return items.sort((a, b) => a.datum.localeCompare(b.datum));
+  return start.toISOString().slice(0, 10);
 }
 
 function OnderhoudPanel({
+  machine,
   onderhoud,
   personen,
   leveranciers,
-  editingTaak,
-  filterValue,
+  verantwoordelijke,
+  onComplete,
   onCreate,
-  onEdit,
-  onFilterChange,
-  onSelectEdit,
-  onStopEdit,
+  onOpenAgenda,
+  onOpenTask,
+}: {
+  machine: Machine;
+  onderhoud: Onderhoud[];
+  personen: Persoon[];
+  leveranciers: Leverancier[];
+  verantwoordelijke?: Persoon;
+  onComplete: (taakId: string) => void;
+  onCreate: () => void;
+  onOpenAgenda: () => void;
+  onOpenTask: (taakId: string) => void;
+}) {
+  const sortedOnderhoud = [...onderhoud].sort((a, b) => (a.datumGepland || "9999").localeCompare(b.datumGepland || "9999"));
+
+  return (
+    <>
+      <section className="maintenanceHero">
+        <p className="eyebrow">Machine</p>
+        <h2>{machine.title}</h2>
+        <p>Verantwoordelijke machine: <strong>{verantwoordelijke?.title ?? "-"}</strong></p>
+      </section>
+      <MaintenanceStats onderhoud={onderhoud} />
+      <section className="maintenanceActions">
+        <button className="primaryButton" onClick={onOpenAgenda} type="button"><LineIcon name="maintenance" /> Bekijk agenda</button>
+        <button className="submitButton" onClick={onCreate} type="button"><LineIcon name="plus" /> Onderhoudstaak aanmaken</button>
+      </section>
+      <MaintenanceTaskList
+        leveranciers={leveranciers}
+        onderhoud={sortedOnderhoud}
+        onComplete={onComplete}
+        onOpenTask={onOpenTask}
+        personen={personen}
+      />
+    </>
+  );
+}
+
+function MaintenanceStats({ onderhoud }: { onderhoud: Onderhoud[] }) {
+  const gepland = onderhoud.filter((taak) => taak.status === "Gepland" && !isOnderhoudAchterstallig(taak)).length;
+  const inProces = onderhoud.filter((taak) => taak.status === "In proces" && !isOnderhoudAchterstallig(taak)).length;
+  const voltooid = onderhoud.filter((taak) => taak.status === "Voltooid").length;
+  const achterstallig = onderhoud.filter(isOnderhoudAchterstallig).length;
+
+  return (
+    <section className="maintenanceStats">
+      <article><span>Totaal</span><strong>{onderhoud.length}</strong></article>
+      <article><span>Gepland</span><strong>{gepland}</strong></article>
+      <article><span>In proces</span><strong>{inProces}</strong></article>
+      <article><span>Voltooid</span><strong>{voltooid}</strong></article>
+      <article className={achterstallig ? "overdue" : ""}><span>Achterstallig</span><strong>{achterstallig}</strong></article>
+    </section>
+  );
+}
+
+function MaintenanceTaskList({
+  onderhoud,
+  personen,
+  leveranciers,
+  onComplete,
+  onOpenTask,
 }: {
   onderhoud: Onderhoud[];
   personen: Persoon[];
   leveranciers: Leverancier[];
-  editingTaak?: Onderhoud;
-  filterValue: string;
-  onCreate: (formData: FormData) => void;
-  onEdit: (taakId: string, formData: FormData) => void;
-  onFilterChange: (value: string) => void;
-  onSelectEdit: (taakId: string) => void;
-  onStopEdit: () => void;
+  onComplete: (taakId: string) => void;
+  onOpenTask: (taakId: string) => void;
 }) {
-  const filteredOnderhoud = filterValue === "all"
-    ? onderhoud
-    : onderhoud.filter((taak) => getResponsibleValue(taak) === filterValue);
-  const agendaItems = getOnderhoudAgendaItems(filteredOnderhoud);
+  if (onderhoud.length === 0) {
+    return <p className="emptyState">Geen onderhoud gepland.</p>;
+  }
+
+  return (
+    <section className="maintenanceList">
+      {onderhoud.map((taak) => (
+        <article className={`maintenanceCard ${taak.status === "Voltooid" ? "completed" : ""}`} key={taak.id}>
+          <button
+            aria-label={taak.status === "Voltooid" ? "Taak voltooid" : "Taak als voltooid markeren"}
+            className={`completeButton ${taak.status === "Voltooid" ? "done" : ""}`}
+            onClick={() => onComplete(taak.id)}
+            type="button"
+          >
+            {taak.status === "Voltooid" ? "✓" : ""}
+          </button>
+          <button className="maintenanceSummary" onClick={() => onOpenTask(taak.id)} type="button">
+            <span>
+              <strong>{taak.title}</strong>
+              <small>{taak.datumGepland || "Geen datum"} · {taak.herhaling === "Geen" ? "eenmalig" : taak.herhaling}</small>
+              <small>Verantwoordelijke: {getResponsibleLabel(taak, personen, leveranciers)}</small>
+              {taak.status === "Voltooid" && taak.datumUitgevoerd && <small className="doneText">Taak voltooid op {taak.datumUitgevoerd}</small>}
+            </span>
+            <MaintenanceStatusBadge taak={taak} />
+          </button>
+        </article>
+      ))}
+    </section>
+  );
+}
+
+function OnderhoudAgendaView({
+  onderhoud,
+  personen,
+  leveranciers,
+  filterValue,
+  statusFilter,
+  onComplete,
+  onCreate,
+  onFilterChange,
+  onOpenTask,
+  onStatusFilterChange,
+}: {
+  onderhoud: Onderhoud[];
+  personen: Persoon[];
+  leveranciers: Leverancier[];
+  filterValue: string;
+  statusFilter: string;
+  onComplete: (taakId: string) => void;
+  onCreate: () => void;
+  onFilterChange: (value: string) => void;
+  onOpenTask: (taakId: string) => void;
+  onStatusFilterChange: (value: string) => void;
+}) {
+  const filteredOnderhoud = onderhoud
+    .filter((taak) => filterValue === "all" || getResponsibleValue(taak) === filterValue)
+    .filter((taak) => statusFilter === "all" || getOnderhoudDisplayStatus(taak) === statusFilter)
+    .sort((a, b) => (a.datumGepland || "9999").localeCompare(b.datumGepland || "9999"));
 
   return (
     <>
-      <OnderhoudForm
-        key={editingTaak?.id ?? "nieuw"}
-        leveranciers={leveranciers}
-        mode={editingTaak ? "edit" : "create"}
-        onCancel={editingTaak ? onStopEdit : undefined}
-        onSubmit={(formData) => (editingTaak ? onEdit(editingTaak.id, formData) : onCreate(formData))}
-        personen={personen}
-        taak={editingTaak}
-      />
-      <section className="filterBlock">
+      <section className="filterBlock agendaFilters">
         <label>
           Filter op verantwoordelijke
           <select value={filterValue} onChange={(event) => onFilterChange(event.target.value)}>
@@ -1783,49 +1989,79 @@ function OnderhoudPanel({
             </optgroup>
           </select>
         </label>
+        <label>
+          Filter op status
+          <select value={statusFilter} onChange={(event) => onStatusFilterChange(event.target.value)}>
+            <option value="all">Alle statussen</option>
+            <option>Gepland</option>
+            <option>In proces</option>
+            <option>Voltooid</option>
+            <option>Achterstallig</option>
+          </select>
+        </label>
       </section>
-      <section className="agendaBlock">
-        <h2><LineIcon name="maintenance" /> Agenda</h2>
-        {agendaItems.length > 0 ? (
-          <div className="agendaList">
-            {agendaItems.map((item) => (
-              <article className="agendaItem" key={item.id}>
-                <StatusIcon status={item.status} />
-                <time>{item.datum}</time>
-                <strong>{item.title}</strong>
-                <span className={`maintenanceStatus ${item.status === "Voltooid" ? "done" : item.status === "In proces" ? "busy" : ""}`}>{item.status}</span>
-                <small>{item.herhaling === "Geen" ? "Eenmalig" : item.herhaling}</small>
-              </article>
-            ))}
-          </div>
-        ) : (
-          <p className="emptyState">Geen onderhoud in de agenda.</p>
-        )}
+      <section className="maintenanceActions">
+        <button className="submitButton" onClick={onCreate} type="button"><LineIcon name="plus" /> Onderhoudstaak aanmaken</button>
       </section>
-      <div className="maintenanceList">
-        {filteredOnderhoud.length > 0 ? (
-          filteredOnderhoud.map((taak) => (
-            <article className={editingTaak?.id === taak.id ? "maintenanceCard active" : "maintenanceCard"} key={taak.id}>
-              <button className="maintenanceSummary" onClick={() => onSelectEdit(taak.id)} type="button">
-                <StatusIcon status={taak.status} />
-                <span>
-                  <strong>{taak.title}</strong>
-                  <small>{taak.datumGepland || "Geen datum"} - {taak.herhaling === "Geen" ? "eenmalig" : taak.herhaling}</small>
-                  <small>Verantwoordelijke: {getResponsibleLabel(taak, personen, leveranciers)}</small>
-                </span>
-                <span className={`maintenanceStatus ${taak.status === "Voltooid" ? "done" : taak.status === "In proces" ? "busy" : ""}`}>{taak.status}</span>
-              </button>
-            </article>
-          ))
-        ) : (
-          <p className="emptyState">Geen onderhoud gepland.</p>
-        )}
-      </div>
+      <MaintenanceTaskList
+        leveranciers={leveranciers}
+        onderhoud={filteredOnderhoud}
+        onComplete={onComplete}
+        onOpenTask={onOpenTask}
+        personen={personen}
+      />
+    </>
+  );
+}
+
+function OnderhoudDetailView({
+  defaultResponsibleId,
+  leveranciers,
+  onCancel,
+  onComplete,
+  onCreate,
+  onEdit,
+  onReschedule,
+  onStart,
+  personen,
+  taak,
+}: {
+  defaultResponsibleId: string;
+  leveranciers: Leverancier[];
+  onCancel: () => void;
+  onComplete: (taakId: string) => void;
+  onCreate: (formData: FormData) => void;
+  onEdit: (taakId: string, formData: FormData) => void;
+  onReschedule: (taak: Onderhoud) => void;
+  onStart: (taakId: string) => void;
+  personen: Persoon[];
+  taak?: Onderhoud;
+}) {
+  return (
+    <>
+      {taak && (
+        <section className="maintenanceActions detailActions">
+          <button className="smallButton" onClick={() => onStart(taak.id)} type="button">Taak starten</button>
+          <button className="submitButton" onClick={() => onComplete(taak.id)} type="button">Taak voltooid</button>
+          <button className="ghostButton" onClick={() => onReschedule(taak)} type="button">Opnieuw plannen</button>
+        </section>
+      )}
+      <OnderhoudForm
+        defaultResponsibleId={defaultResponsibleId}
+        key={taak?.id ?? "nieuw"}
+        leveranciers={leveranciers}
+        mode={taak ? "edit" : "create"}
+        onCancel={onCancel}
+        onSubmit={(formData) => (taak ? onEdit(taak.id, formData) : onCreate(formData))}
+        personen={personen}
+        taak={taak}
+      />
     </>
   );
 }
 
 function OnderhoudForm({
+  defaultResponsibleId,
   leveranciers,
   mode,
   onCancel,
@@ -1833,6 +2069,7 @@ function OnderhoudForm({
   personen,
   taak,
 }: {
+  defaultResponsibleId?: string;
   leveranciers: Leverancier[];
   mode: "create" | "edit";
   onCancel?: () => void;
@@ -1855,7 +2092,7 @@ function OnderhoudForm({
       <label>Datum uitgevoerd<input name="datumUitgevoerd" type="date" defaultValue={taak?.datumUitgevoerd ?? ""} /></label>
       <label>Type onderhoud<select name="typeOnderhoud" defaultValue={taak?.typeOnderhoud ?? "Preventief"}><option>Preventief</option><option>Correctief</option><option>Keuring</option><option>Schoonmaak</option></select></label>
       <label>Verantwoordelijke
-        <select name="verantwoordelijke" defaultValue={taak ? getResponsibleValue(taak) : `Persoon:${personen[0]?.id ?? ""}`}>
+        <select name="verantwoordelijke" defaultValue={taak ? getResponsibleValue(taak) : `Persoon:${defaultResponsibleId || personen[0]?.id || ""}`}>
           <optgroup label="Personen">
             {personen.map((persoon) => <option key={persoon.id} value={`Persoon:${persoon.id}`}>{persoon.title}</option>)}
           </optgroup>
@@ -1870,17 +2107,18 @@ function OnderhoudForm({
       <label>Herhalen tot<input name="herhalingTot" type="date" defaultValue={taak?.herhalingTot ?? ""} /></label>
       <label>Opmerking<textarea name="opmerking" rows={3} defaultValue={taak?.opmerking ?? ""} placeholder="Wat moet er gebeuren?" /></label>
       <div className="formActions">
-        {onCancel && <button className="ghostButton" onClick={onCancel} type="button">Nieuwe taak</button>}
+        {onCancel && <button className="ghostButton" onClick={onCancel} type="button">Terug</button>}
         <button className="submitButton gold" type="submit">{mode === "edit" ? "Wijzigingen opslaan" : "Onderhoudstaak opslaan"}</button>
       </div>
     </form>
   );
 }
 
-function StatusIcon({ status }: { status: Onderhoud["status"] }) {
+function MaintenanceStatusBadge({ taak }: { taak: Onderhoud }) {
+  const status = getOnderhoudDisplayStatus(taak);
   return (
-    <span className={`statusIcon ${status === "Voltooid" ? "done" : status === "In proces" ? "busy" : "planned"}`} title={status}>
-      <LineIcon name="maintenance" />
+    <span className={`maintenanceStatus ${status === "Voltooid" ? "done" : status === "In proces" ? "busy" : status === "Achterstallig" ? "overdue" : ""}`}>
+      {status}
     </span>
   );
 }
