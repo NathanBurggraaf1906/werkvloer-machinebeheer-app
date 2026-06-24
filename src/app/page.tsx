@@ -965,7 +965,7 @@ export default function Home() {
         return {
           ...machine,
           ...machineFieldOverrides[machine.id],
-          afbeeldingUrl: machinePhotos[machine.id] ?? machine.afbeeldingUrl ?? documentPhoto?.url ?? "",
+          afbeeldingUrl: documentPhoto?.url ?? machine.afbeeldingUrl ?? machinePhotos[machine.id] ?? "",
         };
       }),
     }),
@@ -1783,13 +1783,10 @@ function MachinePhotoPanel({ machine, onSubmit }: { machine: Machine; onSubmit: 
     <section className="machinePhotoPanel">
       <h2 className="sectionTitleBar"><LineIcon name="camera" /> Machinefoto</h2>
       {machine.afbeeldingUrl ? (
-        <Image
+        <img
           alt={`Foto van ${machine.title}`}
           className="machinePhoto"
-          height={320}
           src={machine.afbeeldingUrl}
-          unoptimized
-          width={640}
         />
       ) : (
         <div className="machinePhotoPlaceholder">
