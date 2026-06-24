@@ -329,6 +329,30 @@ async function graphFetchRaw(path: string, accessToken: string, init: RequestIni
   return response.json() as Promise<unknown>;
 }
 
+async function graphFetchBlob(path: string, accessToken: string) {
+  const response = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Graph ${response.status}: ${body || response.statusText}`);
+  }
+
+  return response.blob();
+}
+
+function blobToDataUrl(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
 async function getSharePointToken(msal: PublicClientApplication, account: AccountInfo) {
   try {
     const token = await msal.acquireTokenSilent({
@@ -477,6 +501,24 @@ async function fetchListItems(
     await Promise.all(
       result.value.map(async (item) => {
         if (!item.driveItem) return;
+        const documentType = choiceValue(
+          stringValue(item.fields ?? {}, ["Documenttype", "Document type"]),
+          ["Handleiding", "Keuring", "Onderhoud", "Foto", "Overig"],
+          "Overig",
+        );
+
+        if (documentType === "Foto") {
+          try {
+            const blob = await graphFetchBlob(
+              `/sites/${siteId}/lists/${list.id}/items/${item.id}/driveItem/content`,
+              accessToken,
+            );
+            item.driveItem.imageUrl = await blobToDataUrl(blob);
+            return;
+          } catch {
+            // Fall back to Graph thumbnails below.
+          }
+        }
 
         try {
           const thumbnail = await graphFetch<{
@@ -818,7 +860,7 @@ async function uploadMachinePhotoToSharePoint(
       machineId: machine.id,
       omschrijving: `Machinefoto voor ${machine.title}`,
       title: uploaded.name ?? fileName,
-      url: uploaded.webUrl ?? "#",
+      url: await blobToDataUrl(file),
       vervaldatum: "",
     },
     warning,
