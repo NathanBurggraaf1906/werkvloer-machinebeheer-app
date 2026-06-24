@@ -49,7 +49,16 @@ type AuthState =
   | { status: "signedOut"; msal: PublicClientApplication }
   | { status: "signedIn"; account: AccountInfo; msal: PublicClientApplication }
   | { status: "error"; error: string; msal?: PublicClientApplication };
-type SharePointListItem = { id: string; fields?: Record<string, unknown>; driveItem?: { name?: string; webUrl?: string } };
+type SharePointListItem = {
+  id: string;
+  fields?: Record<string, unknown>;
+  driveItem?: {
+    "@microsoft.graph.downloadUrl"?: string;
+    imageUrl?: string;
+    name?: string;
+    webUrl?: string;
+  };
+};
 type SharePointList = { id: string; displayName?: string; name?: string };
 type SharePointColumn = { displayName?: string; name?: string };
 type SharePointDrive = { id: string; name?: string };
@@ -464,6 +473,28 @@ async function fetchListItems(
     accessToken,
   );
 
+  if (includeDriveItem) {
+    await Promise.all(
+      result.value.map(async (item) => {
+        if (!item.driveItem) return;
+
+        try {
+          const thumbnail = await graphFetch<{
+            large?: { url?: string };
+            medium?: { url?: string };
+            small?: { url?: string };
+          }>(
+            `/sites/${siteId}/lists/${list.id}/items/${item.id}/driveItem/thumbnails/0`,
+            accessToken,
+          );
+          item.driveItem.imageUrl = thumbnail.large?.url ?? thumbnail.medium?.url ?? thumbnail.small?.url;
+        } catch {
+          item.driveItem.imageUrl = item.driveItem["@microsoft.graph.downloadUrl"];
+        }
+      }),
+    );
+  }
+
   return result.value;
 }
 
@@ -592,11 +623,14 @@ function mapSharePointData(items: {
 
   const documenten = items.documenten.map((item): MachineDocument => {
     const fields = item.fields ?? {};
-    const url = item.driveItem?.webUrl ?? stringValue(fields, ["FileRef", "Link"]);
+    const documentType = choiceValue(stringValue(fields, ["Documenttype", "Document type"]), ["Handleiding", "Keuring", "Onderhoud", "Foto", "Overig"], "Overig");
+    const sharePointUrl = item.driveItem?.webUrl ?? stringValue(fields, ["FileRef", "Link"]);
+    const imageUrl = item.driveItem?.imageUrl ?? item.driveItem?.["@microsoft.graph.downloadUrl"];
+    const url = documentType === "Foto" ? imageUrl ?? sharePointUrl : sharePointUrl;
 
     return {
       actief: booleanValue(fields, ["Actief"], true),
-      documentType: choiceValue(stringValue(fields, ["Documenttype", "Document type"]), ["Handleiding", "Keuring", "Onderhoud", "Foto", "Overig"], "Overig"),
+      documentType,
       id: `sp-document-${item.id}`,
       machineId:
         idFromLookup(machineIds, lookupIdValue(fields, "Machine")) ||
