@@ -6,7 +6,7 @@ import {
   InteractionRequiredAuthError,
   PublicClientApplication,
 } from "@azure/msal-browser";
-import { FormEvent, MouseEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, MouseEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import { initialData } from "@/lib/seed-data";
 import type {
   Afdeling,
@@ -2452,40 +2452,68 @@ function MachineAiTool({
 }
 
 function AiAnswer({ answer }: { answer: string }) {
-  const blocks = answer
-    .split(/\n{2,}/)
-    .map((block) => block.trim())
-    .filter(Boolean);
+  const headingPattern = /(##\s*(Kort antwoord|Eerste controles|Mogelijke oorzaken|Advies|Bronnen gebruikt))/gi;
+  const normalized = answer.replace(headingPattern, "\n\n$1\n");
+  const blocks = normalized.split(/\n{2,}/).map((block) => block.trim()).filter(Boolean);
 
   return (
     <div className="aiAnswer rich">
-      {blocks.map((block, blockIndex) => {
+      {blocks.flatMap((block, blockIndex) => {
         const lines = block.split("\n").map((line) => line.trim()).filter(Boolean);
 
-        if (lines.length === 1 && lines[0].startsWith("## ")) {
-          return <h3 key={blockIndex}>{lines[0].replace(/^##\s+/, "")}</h3>;
+        if (lines[0]?.startsWith("##")) {
+          const title = lines[0].replace(/^##\s+/, "");
+          const content = lines.slice(1).join(" ");
+          return [
+            <h3 key={`${blockIndex}-heading`}>{title}</h3>,
+            ...renderAiAnswerText(content, `${blockIndex}-content`),
+          ];
         }
 
-        if (lines.every((line) => line.startsWith("- "))) {
-          return (
-            <ul key={blockIndex}>
-              {lines.map((line, lineIndex) => <li key={lineIndex}>{line.replace(/^-\s+/, "")}</li>)}
-            </ul>
-          );
-        }
-
-        if (lines.every((line) => /^\d+[.)]\s+/.test(line))) {
-          return (
-            <ol key={blockIndex}>
-              {lines.map((line, lineIndex) => <li key={lineIndex}>{line.replace(/^\d+[.)]\s+/, "")}</li>)}
-            </ol>
-          );
-        }
-
-        return <p key={blockIndex}>{lines.join(" ")}</p>;
+        return renderAiAnswerText(lines.join(" "), String(blockIndex));
       })}
     </div>
   );
+}
+
+function renderAiAnswerText(text: string, keyPrefix: string): ReactNode[] {
+  const cleanText = text.trim();
+  if (!cleanText) return [];
+  const lines = cleanText.split("\n").map((line) => line.trim()).filter(Boolean);
+
+  if (lines.length > 1) {
+    return lines.flatMap((line, lineIndex) => renderAiAnswerText(line, `${keyPrefix}-${lineIndex}`));
+  }
+
+  if (cleanText.includes(" - ")) {
+    const [intro, ...items] = cleanText.split(/\s+-\s+/).map((item) => item.trim()).filter(Boolean);
+    return [
+      intro && <p key={`${keyPrefix}-intro`}>{intro}</p>,
+      items.length > 0 && (
+        <ul key={`${keyPrefix}-list`}>
+          {items.map((item, itemIndex) => <li key={itemIndex}>{item}</li>)}
+        </ul>
+      ),
+    ].filter(Boolean);
+  }
+
+  if (lines.every((line) => line.startsWith("- "))) {
+    return [
+      <ul key={keyPrefix}>
+        {lines.map((line, lineIndex) => <li key={lineIndex}>{line.replace(/^-\s+/, "")}</li>)}
+      </ul>,
+    ];
+  }
+
+  if (lines.every((line) => /^\d+[.)]\s+/.test(line))) {
+    return [
+      <ol key={keyPrefix}>
+        {lines.map((line, lineIndex) => <li key={lineIndex}>{line.replace(/^\d+[.)]\s+/, "")}</li>)}
+      </ol>,
+    ];
+  }
+
+  return [<p key={keyPrefix}>{cleanText}</p>];
 }
 
 function StoringForm({
