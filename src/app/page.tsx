@@ -6,7 +6,7 @@ import {
   InteractionRequiredAuthError,
   PublicClientApplication,
 } from "@azure/msal-browser";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, MouseEvent, useEffect, useMemo, useState } from "react";
 import { initialData } from "@/lib/seed-data";
 import type {
   Afdeling,
@@ -42,6 +42,7 @@ type FlowScreen =
   | "onderhoud"
   | "onderhoudAgenda"
   | "onderhoudDetail"
+  | "storingNieuw"
   | "storingen";
 type IconName = "home" | "department" | "person" | "machine" | "document" | "maintenance" | "alert" | "camera" | "plus" | "back" | "spark";
 type AuthState =
@@ -954,11 +955,13 @@ export default function Home() {
   const sharePointData = useSharePointData(auth);
   const [machineFieldOverrides, setMachineFieldOverrides] = useState<Record<string, Partial<Machine>>>({});
   const [onderhoudOverrides, setOnderhoudOverrides] = useState<Onderhoud[] | null>(null);
+  const [storingenOverrides, setStoringenOverrides] = useState<StoringOpmerking[] | null>(null);
   const sourceData = sharePointData.status === "ready" ? sharePointData.data : localData;
   const data = useMemo(
     () => ({
       ...sourceData,
       onderhoud: onderhoudOverrides ?? sourceData.onderhoud,
+      storingen: storingenOverrides ?? sourceData.storingen,
       machines: sourceData.machines.map((machine) => {
         const documentPhoto = sourceData.documenten.find(
           (document) => document.machineId === machine.id && document.documentType === "Foto" && document.actief && document.url,
@@ -971,7 +974,7 @@ export default function Home() {
         };
       }),
     }),
-    [machineFieldOverrides, machinePhotos, onderhoudOverrides, sourceData],
+    [machineFieldOverrides, machinePhotos, onderhoudOverrides, sourceData, storingenOverrides],
   );
   const [section, setSection] = useState<Section>("werkvloer");
   const [flowScreen, setFlowScreen] = useState<FlowScreen>("start");
@@ -1032,6 +1035,11 @@ export default function Home() {
     updateEntity("onderhoud", onderhoud);
   }
 
+  function updateStoringenRecords(storingen: StoringOpmerking[]) {
+    setStoringenOverrides(storingen);
+    updateEntity("storingen", storingen);
+  }
+
   if (auth.status === "loading") {
     return <AuthShell message="Microsoft-login laden..." />;
   }
@@ -1086,7 +1094,9 @@ export default function Home() {
 
       <SharePointNotice state={sharePointData} />
 
-      {section === "werkvloer" ? (
+      {sharePointData.status !== "ready" && sharePointData.status !== "error" ? (
+        <SharePointLoadingScreen />
+      ) : section === "werkvloer" ? (
         <WerkvloerFlow
           afdelingen={activeAfdelingen}
           data={data}
@@ -1104,7 +1114,7 @@ export default function Home() {
           updateDocumenten={(documenten) => updateEntity("documenten", documenten)}
           uploadMachinePhoto={uploadMachinePhoto}
           updateOnderhoud={updateOnderhoudRecords}
-          updateStoringen={(storingen) => updateEntity("storingen", storingen)}
+          updateStoringen={updateStoringenRecords}
         />
       ) : (
         <BeheerView
@@ -1134,6 +1144,19 @@ function AuthShell({ message }: { message: string }) {
         <h1>{message}</h1>
       </section>
     </main>
+  );
+}
+
+function SharePointLoadingScreen() {
+  return (
+    <section className="mobileScreen loadingScreen">
+      <div className="loadingCard">
+        <LineIcon name="document" />
+        <p className="eyebrow">SharePoint</p>
+        <h1>Data laden...</h1>
+        <p>Afdelingen, personen, machines, onderhoud en storingen worden uit SharePoint opgehaald.</p>
+      </div>
+    </section>
   );
 }
 
@@ -1472,6 +1495,23 @@ function WerkvloerFlow({
 
     updateStoringen([melding, ...data.storingen]);
     setSaveNotice("Melding opgeslagen op dit apparaat. In de volgende fase koppelen we dit aan gedeelde SharePoint-data.");
+    setFlowScreen("storingen");
+  }
+
+  function resolveStoring(storingId: string) {
+    const vandaag = getTodayValue();
+    const bijgewerkt = data.storingen.map((storing) =>
+      storing.id === storingId
+        ? {
+            ...storing,
+            oplossing: storing.oplossing || `Opgelost op ${vandaag}`,
+            status: "Opgelost" as StoringOpmerking["status"],
+          }
+        : storing,
+    );
+
+    updateStoringen(bijgewerkt);
+    setSaveNotice(`Storing opgelost op ${vandaag}.`);
   }
 
   if (flowScreen === "start") {
@@ -1603,7 +1643,6 @@ function WerkvloerFlow({
             <h2 className="sectionTitleBar"><LineIcon name="machine" /> Machinegegevens</h2>
             <dl className="passportMeta">
               <div><dt>Serie</dt><dd>{selectedMachine.serieNummer}</dd></div>
-              <div><dt>Verantwoordelijke</dt><dd>{verantwoordelijke?.title ?? "-"}</dd></div>
               <div><dt>Leverancier</dt><dd>{leverancier?.title ?? "-"}</dd></div>
               <div><dt>Garantie</dt><dd>{selectedMachine.garantieVerloopdatum || "-"}</dd></div>
             </dl>
@@ -1711,6 +1750,25 @@ function WerkvloerFlow({
     );
   }
 
+  if (flowScreen === "storingNieuw") {
+    return (
+      <section className="mobileScreen">
+        <ScreenHeader
+          eyebrow={selectedMachine?.title ?? "Machine"}
+          goHome={goHome}
+          onBack={() => setFlowScreen("storingen")}
+          title="Nieuwe storing"
+        />
+        {saveNotice && <p className="saveNotice">{saveNotice}</p>}
+        {selectedMachine ? (
+          <StoringForm onSubmit={addStoring} />
+        ) : (
+          <p className="emptyState">Kies eerst een machine voordat je een storing toevoegt.</p>
+        )}
+      </section>
+    );
+  }
+
   return (
     <section className="mobileScreen">
       <ScreenHeader
@@ -1720,8 +1778,18 @@ function WerkvloerFlow({
         title="Storingen / opmerkingen"
       />
       {saveNotice && <p className="saveNotice">{saveNotice}</p>}
-      {selectedMachine && <StoringForm onSubmit={addStoring} />}
-      <StoringList storingen={selectedMachine ? machineStoringen : data.storingen} />
+      {selectedMachine && (
+        <section className="maintenanceActions">
+          <button className="submitButton red" onClick={() => setFlowScreen("storingNieuw")} type="button">
+            <LineIcon name="plus" />
+            Nieuwe storing
+          </button>
+        </section>
+      )}
+      <StoringList
+        onResolve={selectedMachine ? resolveStoring : undefined}
+        storingen={selectedMachine ? machineStoringen : data.storingen}
+      />
     </section>
   );
 }
@@ -2167,6 +2235,14 @@ function OnderhoudForm({
   personen: Persoon[];
   taak?: Onderhoud;
 }) {
+  const [herhaling, setHerhaling] = useState<Onderhoud["herhaling"]>(taak?.herhaling ?? "Geen");
+
+  function openDatePicker(event: MouseEvent<HTMLLabelElement>) {
+    const input = event.currentTarget.querySelector("input");
+    input?.focus();
+    input?.showPicker?.();
+  }
+
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -2178,8 +2254,8 @@ function OnderhoudForm({
     <form className="entryForm" onSubmit={handleSubmit}>
       <h2><LineIcon name="maintenance" /> {mode === "edit" ? "Onderhoudstaak bewerken" : "Onderhoudstaak maken"}</h2>
       <label>Titel<input name="title" defaultValue={taak?.title ?? ""} placeholder="Bijvoorbeeld: messen controleren" required /></label>
-      <label>Datum gepland<input name="datumGepland" type="date" defaultValue={taak?.datumGepland ?? ""} /></label>
-      <label>Datum uitgevoerd<input name="datumUitgevoerd" type="date" defaultValue={taak?.datumUitgevoerd ?? ""} /></label>
+      <label onClick={openDatePicker}>Datum gepland<input name="datumGepland" type="date" defaultValue={taak?.datumGepland ?? ""} /></label>
+      <label onClick={openDatePicker}>Datum uitgevoerd<input name="datumUitgevoerd" type="date" defaultValue={taak?.datumUitgevoerd ?? ""} /></label>
       <label>Type onderhoud<select name="typeOnderhoud" defaultValue={taak?.typeOnderhoud ?? "Preventief"}><option>Preventief</option><option>Correctief</option><option>Keuring</option><option>Schoonmaak</option></select></label>
       <label>Verantwoordelijke
         <select name="verantwoordelijke" defaultValue={taak ? getResponsibleValue(taak) : `Persoon:${defaultResponsibleId || personen[0]?.id || ""}`}>
@@ -2192,9 +2268,13 @@ function OnderhoudForm({
         </select>
       </label>
       <label>Status<select name="status" defaultValue={taak?.status ?? "Gepland"}><option>Gepland</option><option>In proces</option><option>Voltooid</option></select></label>
-      <label>Herhaling<select name="herhaling" defaultValue={taak?.herhaling ?? "Geen"}><option>Geen</option><option>Wekelijks</option><option>Maandelijks</option><option>Jaarlijks</option><option>Eerste weekdag van de maand</option><option>Eerste weekdag van het kwartaal</option></select></label>
-      <label>Eerste weekdag<select name="herhalingWeekdag" defaultValue={taak?.herhalingWeekdag ?? "Maandag"}>{weekdagen.map((weekdag) => <option key={weekdag}>{weekdag}</option>)}</select></label>
-      <label>Herhalen tot<input name="herhalingTot" type="date" defaultValue={taak?.herhalingTot ?? ""} /></label>
+      <label>Herhaling<select name="herhaling" value={herhaling} onChange={(event) => setHerhaling(event.target.value as Onderhoud["herhaling"])}><option>Geen</option><option>Wekelijks</option><option>Maandelijks</option><option>Jaarlijks</option><option>Eerste weekdag van de maand</option><option>Eerste weekdag van het kwartaal</option></select></label>
+      {herhaling !== "Geen" && (
+        <>
+          <label>Eerste weekdag<select name="herhalingWeekdag" defaultValue={taak?.herhalingWeekdag ?? "Maandag"}>{weekdagen.map((weekdag) => <option key={weekdag}>{weekdag}</option>)}</select></label>
+          <label onClick={openDatePicker}>Herhalen tot<input name="herhalingTot" type="date" defaultValue={taak?.herhalingTot ?? ""} /></label>
+        </>
+      )}
       <label>Opmerking<textarea name="opmerking" rows={3} defaultValue={taak?.opmerking ?? ""} placeholder="Wat moet er gebeuren?" /></label>
       <div className="formActions">
         {onCancel && <button className="ghostButton" onClick={onCancel} type="button">Terug</button>}
@@ -2406,15 +2486,32 @@ function DocumentList({ documenten, onOpen }: { documenten: MachineDocument[]; o
   );
 }
 
-function StoringList({ storingen }: { storingen: StoringOpmerking[] }) {
+function StoringList({
+  onResolve,
+  storingen,
+}: {
+  onResolve?: (storingId: string) => void;
+  storingen: StoringOpmerking[];
+}) {
   if (storingen.length === 0) return <p className="emptyState">Geen meldingen.</p>;
 
   return (
     <div className="recordList">
       {storingen.map((item) => (
-        <article className="recordCard alertCard" key={item.id}>
+        <article className={`recordCard alertCard ${item.status === "Opgelost" ? "resolved" : ""}`} key={item.id}>
+          <div className="alertCardHeader">
+            <span className={`alertStatus ${item.status === "Opgelost" ? "resolved" : ""}`}>
+              {item.status === "Opgelost" ? "✓ Opgelost" : item.status}
+            </span>
+            {onResolve && item.status !== "Opgelost" && (
+              <button className="smallButton resolveButton" onClick={() => onResolve(item.id)} type="button">
+                ✓ Opgelost
+              </button>
+            )}
+          </div>
           <strong>{item.title}</strong>
-          <p>{item.prioriteit} - {item.status} - {item.omschrijving}</p>
+          <p>{item.type} - {item.prioriteit} - {item.omschrijving}</p>
+          {item.oplossing && <p className="resolvedText">{item.oplossing}</p>}
           {item.bijlagen && item.bijlagen.length > 0 && (
             <div className="attachmentGrid">
               {item.bijlagen.map((bijlage) => (

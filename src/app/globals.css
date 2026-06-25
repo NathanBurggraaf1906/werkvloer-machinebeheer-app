@@ -89,6 +89,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .dataNotice.ready { background: #f0f8ef; border-color: rgba(21,128,61,.25); border-left-color: #15803d; }
 .dataNotice.error { background: var(--red-pale); border-left-color: var(--red); }
 .authShell { align-items: center; display: grid; justify-items: center; }
+.loadingScreen { align-items: center; display: grid; justify-items: center; }
+.loadingCard { background: linear-gradient(180deg, var(--white), #fffaf0); border: 2px solid var(--gold); border-left: 8px solid var(--red); border-radius: 8px; box-shadow: var(--shadow); display: grid; gap: 12px; max-width: 520px; padding: 28px; text-align: center; width: 100%; }
+.loadingCard .lineIcon { color: var(--red); height: 38px; justify-self: center; width: 38px; }
+.loadingCard h1 { color: var(--black); font-size: 36px; line-height: 1; }
+.loadingCard p:last-child { color: var(--muted); line-height: 1.4; }
 .loginCard { background: linear-gradient(180deg, var(--panel), var(--gold-pale)); border: 2px solid var(--gold); border-top: 10px solid var(--black); border-radius: 8px; box-shadow: var(--shadow); display: grid; gap: 16px; max-width: 560px; padding: 28px; text-align: center; width: 100%; }
 .loginLogo { border: 2px solid var(--gold); border-radius: 999px; justify-self: center; object-fit: cover; }
 .loginCard h1 { color: var(--black); font-size: 42px; line-height: 1; }
@@ -168,6 +173,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .fileBox.red { border-color: var(--red); color: var(--red); }
 .alertForm { border-color: rgba(225,6,0,.3); box-shadow: inset 4px 0 0 var(--red); }
 .alertCard { border-color: rgba(225,6,0,.28); }
+.alertCard.resolved { border-color: rgba(21,128,61,.35); border-left-color: #15803d; }
+.alertCardHeader { align-items: center; display: flex; gap: 10px; justify-content: space-between; margin-bottom: 10px; }
+.alertStatus { background: var(--red-pale); border: 1px solid rgba(225,6,0,.28); border-radius: 999px; color: var(--red); display: inline-flex; font-size: 13px; font-weight: 700; padding: 5px 10px; }
+.alertStatus.resolved { background: #ecf8ef; border-color: rgba(21,128,61,.35); color: #15803d; }
+.resolveButton { min-height: 36px; }
+.resolvedText { color: #15803d !important; font-weight: 700; }
 .fileLink { border: 1px solid var(--gold); border-radius: 6px; color: var(--black); display: inline-flex; font-weight: 700; margin-top: 12px; padding: 8px 10px; text-decoration: none; }
 .attachmentGrid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); margin-top: 12px; }
 .attachment { border: 1px solid var(--line); border-radius: 8px; color: var(--black); display: grid; gap: 6px; padding: 8px; text-decoration: none; }
