@@ -165,6 +165,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .entryForm input:hover, .entryForm textarea:hover, .entryForm select:hover, .filterBlock select:hover, .passportEditForm select:hover, td input:hover { border-color: var(--gold); }
 .entryForm input:focus, .entryForm textarea:focus, .entryForm select:focus, .filterBlock select:focus, .passportEditForm select:focus, td input:focus { border-color: var(--gold); box-shadow: 0 0 0 4px rgba(162,144,97,.14); outline: 0; }
 .entryForm textarea { resize: vertical; }
+.formMeta { background: var(--gold-pale); border: 1px solid #d8ccaa; border-radius: 8px; color: var(--muted); line-height: 1.35; padding: 10px 12px; }
 .formActions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }
 .checkLine { align-items: center; display: flex !important; gap: 10px !important; grid-template-columns: auto 1fr; }
 .checkLine input { min-height: 20px; width: 20px; }
@@ -175,6 +176,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .alertCard { border-color: rgba(225,6,0,.28); }
 .alertCard.resolved { border-color: rgba(21,128,61,.35); border-left-color: #15803d; }
 .alertCardHeader { align-items: center; display: flex; gap: 10px; justify-content: space-between; margin-bottom: 10px; }
+.alertCardActions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
 .alertStatus { background: var(--red-pale); border: 1px solid rgba(225,6,0,.28); border-radius: 999px; color: var(--red); display: inline-flex; font-size: 13px; font-weight: 700; padding: 5px 10px; }
 .alertStatus.resolved { background: #ecf8ef; border-color: rgba(21,128,61,.35); color: #15803d; }
 .resolveButton { min-height: 36px; }

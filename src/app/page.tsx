@@ -42,6 +42,7 @@ type FlowScreen =
   | "onderhoud"
   | "onderhoudAgenda"
   | "onderhoudDetail"
+  | "storingDetail"
   | "storingNieuw"
   | "storingen";
 type IconName = "home" | "department" | "person" | "machine" | "document" | "maintenance" | "alert" | "camera" | "plus" | "back" | "spark";
@@ -1243,6 +1244,7 @@ function WerkvloerFlow({
 }) {
   const [selectedDocumentId, setSelectedDocumentId] = useState("");
   const [editingOnderhoudId, setEditingOnderhoudId] = useState("");
+  const [editingStoringId, setEditingStoringId] = useState("");
   const [maintenanceFilter, setMaintenanceFilter] = useState("all");
   const [maintenanceStatusFilter, setMaintenanceStatusFilter] = useState("all");
   const [saveNotice, setSaveNotice] = useState("");
@@ -1271,6 +1273,9 @@ function WerkvloerFlow({
   const editingOnderhoud = data.onderhoud.find(
     (taak) => taak.id === editingOnderhoudId,
   );
+  const editingStoring = data.storingen.find(
+    (storing) => storing.id === editingStoringId,
+  );
 
   function chooseAfdeling(afdelingId: string) {
     setSelectedAfdelingId(afdelingId);
@@ -1292,6 +1297,7 @@ function WerkvloerFlow({
     if (machine) setSelectedAfdelingId(machine.afdelingId);
     setSelectedDocumentId("");
     setEditingOnderhoudId("");
+    setEditingStoringId("");
     setFlowScreen("paspoort");
   }
 
@@ -1495,6 +1501,30 @@ function WerkvloerFlow({
 
     updateStoringen([melding, ...data.storingen]);
     setSaveNotice("Melding opgeslagen op dit apparaat. In de volgende fase koppelen we dit aan gedeelde SharePoint-data.");
+    setEditingStoringId(melding.id);
+    setFlowScreen("storingen");
+  }
+
+  async function editStoring(storingId: string, formData: FormData) {
+    const files = formData.getAll("bijlagen").filter((file): file is File => file instanceof File && file.size > 0);
+    const nieuweBijlagen = await Promise.all(files.map(fileToBijlage));
+    const bijgewerkt = data.storingen.map((storing) =>
+      storing.id === storingId
+        ? {
+            ...storing,
+            bijlagen: [...(storing.bijlagen ?? []), ...nieuweBijlagen],
+            omschrijving: String(formData.get("omschrijving") || ""),
+            oplossing: String(formData.get("oplossing") || ""),
+            prioriteit: String(formData.get("prioriteit") || storing.prioriteit) as StoringOpmerking["prioriteit"],
+            status: String(formData.get("status") || storing.status) as StoringOpmerking["status"],
+            title: String(formData.get("title") || storing.title),
+            type: String(formData.get("type") || storing.type) as StoringOpmerking["type"],
+          }
+        : storing,
+    );
+
+    updateStoringen(bijgewerkt);
+    setSaveNotice("Storing bijgewerkt.");
     setFlowScreen("storingen");
   }
 
@@ -1512,6 +1542,11 @@ function WerkvloerFlow({
 
     updateStoringen(bijgewerkt);
     setSaveNotice(`Storing opgelost op ${vandaag}.`);
+  }
+
+  function openStoringDetail(storingId: string) {
+    setEditingStoringId(storingId);
+    setFlowScreen("storingDetail");
   }
 
   if (flowScreen === "start") {
@@ -1761,9 +1796,32 @@ function WerkvloerFlow({
         />
         {saveNotice && <p className="saveNotice">{saveNotice}</p>}
         {selectedMachine ? (
-          <StoringForm onSubmit={addStoring} />
+          <StoringForm mode="create" onSubmit={addStoring} />
         ) : (
           <p className="emptyState">Kies eerst een machine voordat je een storing toevoegt.</p>
+        )}
+      </section>
+    );
+  }
+
+  if (flowScreen === "storingDetail") {
+    return (
+      <section className="mobileScreen">
+        <ScreenHeader
+          eyebrow={selectedMachine?.title ?? "Machine"}
+          goHome={goHome}
+          onBack={() => setFlowScreen("storingen")}
+          title="Storing bekijken"
+        />
+        {saveNotice && <p className="saveNotice">{saveNotice}</p>}
+        {editingStoring ? (
+          <StoringForm
+            mode="edit"
+            onSubmit={(formData) => editStoring(editingStoring.id, formData)}
+            storing={editingStoring}
+          />
+        ) : (
+          <p className="emptyState">Deze storing is niet gevonden.</p>
         )}
       </section>
     );
@@ -1787,6 +1845,7 @@ function WerkvloerFlow({
         </section>
       )}
       <StoringList
+        onOpen={openStoringDetail}
         onResolve={selectedMachine ? resolveStoring : undefined}
         storingen={selectedMachine ? machineStoringen : data.storingen}
       />
@@ -2389,7 +2448,15 @@ function MachineAiTool({
   );
 }
 
-function StoringForm({ onSubmit }: { onSubmit: (formData: FormData) => Promise<void> }) {
+function StoringForm({
+  mode,
+  onSubmit,
+  storing,
+}: {
+  mode: "create" | "edit";
+  onSubmit: (formData: FormData) => Promise<void>;
+  storing?: StoringOpmerking;
+}) {
   const [busy, setBusy] = useState(false);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -2397,19 +2464,41 @@ function StoringForm({ onSubmit }: { onSubmit: (formData: FormData) => Promise<v
     const form = event.currentTarget;
     setBusy(true);
     await onSubmit(new FormData(form));
-    form.reset();
+    if (mode === "create") form.reset();
     setBusy(false);
   }
 
   return (
     <form className="entryForm alertForm" onSubmit={handleSubmit}>
-      <h2><LineIcon name="alert" /> Nieuwe melding</h2>
-      <label>Titel<input name="title" placeholder="Bijvoorbeeld: afwijkend geluid" required /></label>
-      <label>Type<select name="type" defaultValue="Storing"><option>Storing</option><option>Opmerking</option><option>Verbeterpunt</option></select></label>
-      <label>Prioriteit<select name="prioriteit" defaultValue="Normaal"><option>Laag</option><option>Normaal</option><option>Hoog</option></select></label>
-      <label>Omschrijving<textarea name="omschrijving" rows={3} placeholder="Beschrijf wat je ziet of hoort" required /></label>
+      <h2><LineIcon name="alert" /> {mode === "edit" ? "Storing bekijken / bewerken" : "Nieuwe melding"}</h2>
+      {storing?.datum && <p className="formMeta">Gemeld op {storing.datum}</p>}
+      <label>Titel<input name="title" defaultValue={storing?.title ?? ""} placeholder="Bijvoorbeeld: afwijkend geluid" required /></label>
+      <label>Type<select name="type" defaultValue={storing?.type ?? "Storing"}><option>Storing</option><option>Opmerking</option><option>Verbeterpunt</option></select></label>
+      <label>Prioriteit<select name="prioriteit" defaultValue={storing?.prioriteit ?? "Normaal"}><option>Laag</option><option>Normaal</option><option>Hoog</option></select></label>
+      <label>Status<select name="status" defaultValue={storing?.status ?? "Open"}><option>Open</option><option>In behandeling</option><option>Opgelost</option></select></label>
+      <label>Omschrijving<textarea name="omschrijving" rows={3} defaultValue={storing?.omschrijving ?? ""} placeholder="Beschrijf wat je ziet of hoort" required /></label>
+      <label>Oplossing<textarea name="oplossing" rows={3} defaultValue={storing?.oplossing ?? ""} placeholder="Wat is er gedaan of wat is de oplossing?" /></label>
+      {storing?.bijlagen && storing.bijlagen.length > 0 && (
+        <div className="attachmentGrid">
+          {storing.bijlagen.map((bijlage) => (
+            <a className="attachment" href={bijlage.dataUrl} key={bijlage.id} download={bijlage.naam}>
+              {bijlage.type.startsWith("image/") ? (
+                <span
+                  aria-label={bijlage.naam}
+                  className="attachmentPreview"
+                  role="img"
+                  style={{ backgroundImage: `url(${bijlage.dataUrl})` }}
+                />
+              ) : (
+                <LineIcon name="document" />
+              )}
+              <span>{bijlage.naam}</span>
+            </a>
+          ))}
+        </div>
+      )}
       <label className="fileBox red"><LineIcon name="camera" /> Foto of bijlage toevoegen<input accept="image/*,.pdf,.doc,.docx" capture="environment" multiple name="bijlagen" type="file" /></label>
-      <button className="submitButton red" disabled={busy} type="submit">{busy ? "Opslaan..." : "Melding opslaan"}</button>
+      <button className="submitButton red" disabled={busy} type="submit">{busy ? "Opslaan..." : mode === "edit" ? "Wijzigingen opslaan" : "Melding opslaan"}</button>
     </form>
   );
 }
@@ -2487,9 +2576,11 @@ function DocumentList({ documenten, onOpen }: { documenten: MachineDocument[]; o
 }
 
 function StoringList({
+  onOpen,
   onResolve,
   storingen,
 }: {
+  onOpen?: (storingId: string) => void;
   onResolve?: (storingId: string) => void;
   storingen: StoringOpmerking[];
 }) {
@@ -2503,11 +2594,18 @@ function StoringList({
             <span className={`alertStatus ${item.status === "Opgelost" ? "resolved" : ""}`}>
               {item.status === "Opgelost" ? "✓ Opgelost" : item.status}
             </span>
-            {onResolve && item.status !== "Opgelost" && (
-              <button className="smallButton resolveButton" onClick={() => onResolve(item.id)} type="button">
-                ✓ Opgelost
-              </button>
-            )}
+            <div className="alertCardActions">
+              {onOpen && (
+                <button className="smallButton" onClick={() => onOpen(item.id)} type="button">
+                  Openen
+                </button>
+              )}
+              {onResolve && item.status !== "Opgelost" && (
+                <button className="smallButton resolveButton" onClick={() => onResolve(item.id)} type="button">
+                  ✓ Opgelost
+                </button>
+              )}
+            </div>
           </div>
           <strong>{item.title}</strong>
           <p>{item.type} - {item.prioriteit} - {item.omschrijving}</p>
