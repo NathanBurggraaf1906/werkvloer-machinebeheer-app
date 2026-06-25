@@ -1604,7 +1604,12 @@ function WerkvloerFlow({
           <ActionButton icon="alert" label="Storingen" onClick={() => setFlowScreen("storingen")} tone="red" />
           </div>
         </section>
-        <MachineAiTool machine={selectedMachine} storingen={machineStoringen} />
+        <MachineAiTool
+          documents={machineDocuments}
+          machine={selectedMachine}
+          onderhoud={machineOnderhoud}
+          storingen={machineStoringen}
+        />
       </section>
     );
   }
@@ -2196,20 +2201,57 @@ function MaintenanceStatusBadge({ taak }: { taak: Onderhoud }) {
   );
 }
 
-function MachineAiTool({ machine, storingen }: { machine: Machine; storingen: StoringOpmerking[] }) {
+function MachineAiTool({
+  documents,
+  machine,
+  onderhoud,
+  storingen,
+}: {
+  documents: MachineDocument[];
+  machine: Machine;
+  onderhoud: Onderhoud[];
+  storingen: StoringOpmerking[];
+}) {
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
+  const [sources, setSources] = useState<Array<{ documentType: string; title: string; url?: string }>>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const openStoringen = storingen.filter((storing) => storing.status !== "Opgelost");
-    const storingHint = openStoringen.length > 0
-      ? `Er staan ${openStoringen.length} open melding(en). Controleer eerst de laatst gemelde symptomen, veiligheid en basisinstellingen.`
-      : "Er staan geen open meldingen bij deze machine in de testdata.";
+    setBusy(true);
+    setError("");
+    setAnswer("");
+    setSources([]);
 
-    setAnswer(
-      `Mock AI-antwoord voor ${machine.title}: ${storingHint} Mogelijke eerste stappen: machine veiligstellen, visuele controle uitvoeren, handleiding/documenten raadplegen en verantwoordelijke inschakelen. Later koppelen we dit blok aan een echte AI-endpoint met machinegegevens, documenten en storingshistorie.`,
-    );
+    try {
+      const response = await fetch("/api/ai-machine-question", {
+        body: JSON.stringify({
+          documents,
+          machine,
+          onderhoud,
+          question,
+          storingen,
+        }),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        method: "POST",
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "AI-antwoord ophalen is niet gelukt.");
+      }
+
+      setAnswer(data.answer || "Geen antwoord ontvangen.");
+      setSources(data.sources ?? []);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "AI-antwoord ophalen is niet gelukt.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -2229,9 +2271,28 @@ function MachineAiTool({ machine, storingen }: { machine: Machine; storingen: St
             value={question}
           />
         </label>
-        <button className="submitButton red" type="submit">Eerste oorzaken zoeken</button>
+        <button className="submitButton red" disabled={busy || !question.trim()} type="submit">
+          {busy ? "AI denkt mee..." : "Eerste oorzaken zoeken"}
+        </button>
       </form>
+      {error && <p className="aiAnswer error">{error}</p>}
       {answer && <p className="aiAnswer">{answer}</p>}
+      {sources.length > 0 && (
+        <div className="aiSources">
+          <strong>Bronnen gebruikt</strong>
+          {sources.map((source) => (
+            source.url ? (
+              <a href={source.url} key={`${source.documentType}-${source.title}`} rel="noreferrer" target="_blank">
+                {source.documentType}: {source.title}
+              </a>
+            ) : (
+              <span key={`${source.documentType}-${source.title}`}>
+                {source.documentType}: {source.title}
+              </span>
+            )
+          ))}
+        </div>
+      )}
     </section>
   );
 }
