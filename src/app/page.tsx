@@ -953,10 +953,12 @@ export default function Home() {
   const { photos: machinePhotos, updateMachinePhoto } = useMachinePhotoOverrides();
   const sharePointData = useSharePointData(auth);
   const [machineFieldOverrides, setMachineFieldOverrides] = useState<Record<string, Partial<Machine>>>({});
+  const [onderhoudOverrides, setOnderhoudOverrides] = useState<Onderhoud[] | null>(null);
   const sourceData = sharePointData.status === "ready" ? sharePointData.data : localData;
   const data = useMemo(
     () => ({
       ...sourceData,
+      onderhoud: onderhoudOverrides ?? sourceData.onderhoud,
       machines: sourceData.machines.map((machine) => {
         const documentPhoto = sourceData.documenten.find(
           (document) => document.machineId === machine.id && document.documentType === "Foto" && document.actief && document.url,
@@ -969,7 +971,7 @@ export default function Home() {
         };
       }),
     }),
-    [machineFieldOverrides, machinePhotos, sourceData],
+    [machineFieldOverrides, machinePhotos, onderhoudOverrides, sourceData],
   );
   const [section, setSection] = useState<Section>("werkvloer");
   const [flowScreen, setFlowScreen] = useState<FlowScreen>("start");
@@ -1023,6 +1025,11 @@ export default function Home() {
         ...update,
       },
     }));
+  }
+
+  function updateOnderhoudRecords(onderhoud: Onderhoud[]) {
+    setOnderhoudOverrides(onderhoud);
+    updateEntity("onderhoud", onderhoud);
   }
 
   if (auth.status === "loading") {
@@ -1096,7 +1103,7 @@ export default function Home() {
           updateMachinePassport={updateMachinePassport}
           updateDocumenten={(documenten) => updateEntity("documenten", documenten)}
           uploadMachinePhoto={uploadMachinePhoto}
-          updateOnderhoud={(onderhoud) => updateEntity("onderhoud", onderhoud)}
+          updateOnderhoud={updateOnderhoudRecords}
           updateStoringen={(storingen) => updateEntity("storingen", storingen)}
         />
       ) : (
@@ -1409,6 +1416,12 @@ function WerkvloerFlow({
     updateOnderhoudStatus(taakId, "Voltooid");
   }
 
+  function completeOnderhoudAndReturn(taakId: string) {
+    updateOnderhoudStatus(taakId, "Voltooid");
+    setEditingOnderhoudId("");
+    setFlowScreen("onderhoud");
+  }
+
   function rescheduleOnderhoud(taak: Onderhoud) {
     if (!selectedMachine) return;
 
@@ -1686,11 +1699,10 @@ function WerkvloerFlow({
             defaultResponsibleId={selectedMachine.verantwoordelijkeId}
             leveranciers={data.leveranciers}
             onCancel={() => setFlowScreen("onderhoud")}
-            onComplete={completeOnderhoud}
             onCreate={addOnderhoud}
             onEdit={editOnderhoud}
             onReschedule={rescheduleOnderhoud}
-            onStart={(taakId) => updateOnderhoudStatus(taakId, "In proces")}
+            onCompleteAndReturn={completeOnderhoudAndReturn}
             personen={data.personen}
             taak={editingOnderhoud?.machineId === selectedMachine.id ? editingOnderhoud : undefined}
           />
@@ -2004,7 +2016,10 @@ function MaintenanceTaskList({
           <button
             aria-label={taak.status === "Voltooid" ? "Taak voltooid" : "Taak als voltooid markeren"}
             className={`completeButton ${taak.status === "Voltooid" ? "done" : ""}`}
-            onClick={() => onComplete(taak.id)}
+            onClick={(event) => {
+              event.stopPropagation();
+              onComplete(taak.id);
+            }}
             type="button"
           >
             {taak.status === "Voltooid" ? "✓" : ""}
@@ -2096,22 +2111,20 @@ function OnderhoudDetailView({
   defaultResponsibleId,
   leveranciers,
   onCancel,
-  onComplete,
+  onCompleteAndReturn,
   onCreate,
   onEdit,
   onReschedule,
-  onStart,
   personen,
   taak,
 }: {
   defaultResponsibleId: string;
   leveranciers: Leverancier[];
   onCancel: () => void;
-  onComplete: (taakId: string) => void;
+  onCompleteAndReturn: (taakId: string) => void;
   onCreate: (formData: FormData) => void;
   onEdit: (taakId: string, formData: FormData) => void;
   onReschedule: (taak: Onderhoud) => void;
-  onStart: (taakId: string) => void;
   personen: Persoon[];
   taak?: Onderhoud;
 }) {
@@ -2119,8 +2132,7 @@ function OnderhoudDetailView({
     <>
       {taak && (
         <section className="maintenanceActions detailActions">
-          <button className="smallButton" onClick={() => onStart(taak.id)} type="button">Taak starten</button>
-          <button className="submitButton" onClick={() => onComplete(taak.id)} type="button">Taak voltooid</button>
+          <button className="submitButton" onClick={() => onCompleteAndReturn(taak.id)} type="button">Taak voltooid</button>
           <button className="ghostButton" onClick={() => onReschedule(taak)} type="button">Opnieuw plannen</button>
         </section>
       )}
