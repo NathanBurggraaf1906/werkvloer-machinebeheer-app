@@ -2430,7 +2430,7 @@ function MachineAiTool({
         </button>
       </form>
       {error && <p className="aiAnswer error">{error}</p>}
-      {answer && <p className="aiAnswer">{answer}</p>}
+      {answer && <AiAnswer answer={answer} />}
       {sources.length > 0 && (
         <div className="aiSources">
           <strong>Bronnen gebruikt</strong>
@@ -2448,6 +2448,43 @@ function MachineAiTool({
         </div>
       )}
     </section>
+  );
+}
+
+function AiAnswer({ answer }: { answer: string }) {
+  const blocks = answer
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+
+  return (
+    <div className="aiAnswer rich">
+      {blocks.map((block, blockIndex) => {
+        const lines = block.split("\n").map((line) => line.trim()).filter(Boolean);
+
+        if (lines.length === 1 && lines[0].startsWith("## ")) {
+          return <h3 key={blockIndex}>{lines[0].replace(/^##\s+/, "")}</h3>;
+        }
+
+        if (lines.every((line) => line.startsWith("- "))) {
+          return (
+            <ul key={blockIndex}>
+              {lines.map((line, lineIndex) => <li key={lineIndex}>{line.replace(/^-\s+/, "")}</li>)}
+            </ul>
+          );
+        }
+
+        if (lines.every((line) => /^\d+[.)]\s+/.test(line))) {
+          return (
+            <ol key={blockIndex}>
+              {lines.map((line, lineIndex) => <li key={lineIndex}>{line.replace(/^\d+[.)]\s+/, "")}</li>)}
+            </ol>
+          );
+        }
+
+        return <p key={blockIndex}>{lines.join(" ")}</p>;
+      })}
+    </div>
   );
 }
 

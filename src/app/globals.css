@@ -245,6 +245,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .aiTool textarea { background: var(--white); border: 1px solid #d8ccaa; border-radius: 8px; min-height: 96px; padding: 12px; resize: vertical; width: 100%; }
 .aiAnswer { background: var(--gold-pale); border-left: 5px solid var(--red); border-radius: 8px; color: var(--black); line-height: 1.45; padding: 12px; }
 .aiAnswer.error { background: var(--red-pale); border-left-color: var(--red); }
+.aiAnswer.rich { background: linear-gradient(180deg, var(--white), #fffaf0); border: 1px solid #d8ccaa; border-left: 6px solid var(--red); display: grid; gap: 12px; padding: 16px; }
+.aiAnswer.rich h3 { border-bottom: 1px solid var(--gold-soft); color: var(--gold); font-size: 13px; font-weight: 700; letter-spacing: .08em; line-height: 1.2; padding-bottom: 6px; text-transform: uppercase; }
+.aiAnswer.rich p { color: var(--black); line-height: 1.5; }
+.aiAnswer.rich ul, .aiAnswer.rich ol { display: grid; gap: 8px; margin: 0; padding-left: 22px; }
+.aiAnswer.rich li { color: var(--black); line-height: 1.45; padding-left: 2px; }
+.aiAnswer.rich li::marker { color: var(--red); font-weight: 700; }
 .aiSources { background: var(--white); border: 1px solid #d8ccaa; border-radius: 8px; display: grid; gap: 8px; padding: 12px; }
 .aiSources strong { color: var(--gold); font-size: 13px; letter-spacing: .08em; text-transform: uppercase; }
 .aiSources a, .aiSources span { color: var(--black); font-size: 14px; line-height: 1.35; }
