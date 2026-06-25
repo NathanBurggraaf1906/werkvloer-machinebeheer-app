@@ -2036,7 +2036,10 @@ function getOnderhoudDisplayStatus(taak: Onderhoud) {
 }
 
 function getNextOnderhoudDate(taak: Onderhoud) {
-  const basisDatum = taak.datumGepland || getTodayValue();
+  const basisDatum =
+    taak.datumUitgevoerd && taak.datumUitgevoerd > (taak.datumGepland || "")
+      ? taak.datumUitgevoerd
+      : taak.datumGepland || taak.datumUitgevoerd || getTodayValue();
   const start = new Date(`${basisDatum}T00:00:00`);
 
   if (taak.herhaling === "Wekelijks") start.setDate(start.getDate() + 7);
