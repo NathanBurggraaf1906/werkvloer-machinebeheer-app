@@ -22,7 +22,7 @@ import type {
   Weekdag,
 } from "@/lib/types";
 
-const appVersion = "V1.1";
+const appVersion = "V1.2";
 const storageKey = "werkvloer-machinebeheer-v1";
 const microsoftClientId = "0d1f2e04-7363-408c-8d69-26516c6f1e98";
 const microsoftTenantId = "568c87e9-d6ed-4409-acab-1251c4d47545";
@@ -1119,18 +1119,28 @@ function AuthShell({ message }: { message: string }) {
   return (
     <main className="appShell authShell">
       <section className="loginCard">
-        <Image
-          alt="1906 makers van charcuterie"
-          className="loginLogo"
-          height={104}
-          priority
-          src="/brand/1906-round-logo.jpg"
-          width={104}
-        />
-        <p className="eyebrow">Werkvloer Machinebeheer</p>
-        <h1>{message}</h1>
+        <div className="loginContent">
+          <Image
+            alt="1906 makers van charcuterie"
+            className="loginLogo"
+            height={104}
+            priority
+            src="/brand/1906-round-logo.jpg"
+            width={104}
+          />
+          <p className="eyebrow">Werkvloer Machinebeheer</p>
+          <h1>{message}</h1>
 
-        <span className="loginVersion">Appversie {appVersion}</span>
+          <span className="loginVersion">Appversie {appVersion}</span>
+        </div>
+        <Image
+          alt="Biologische achterham van 1906 makers van charcuterie"
+          className="loginProductPhoto"
+          height={360}
+          priority
+          src="/brand/1906-achterham-hero.jpg"
+          width={560}
+        />
       </section>
     </main>
   );
@@ -1153,26 +1163,36 @@ function LoginScreen({ error, onSignIn }: { error?: string; onSignIn: () => void
   return (
     <main className="appShell authShell">
       <section className="loginCard">
+        <div className="loginContent">
+          <Image
+            alt="1906 makers van charcuterie"
+            className="loginLogo"
+            height={112}
+            priority
+            src="/brand/1906-round-logo.jpg"
+            width={112}
+          />
+          <p className="eyebrow">Beveiligde werkvloer-app</p>
+          <h1>Log in met Microsoft.</h1>
+          <p>
+            Alleen gebruikers uit de Microsoft 365-omgeving van 1906 makers van
+            charcuterie kunnen deze pilot openen.
+          </p>
+          {error && <p className="authError">{error}</p>}
+          <button className="submitButton red" onClick={onSignIn} type="button">
+            <LineIcon name="person" />
+            Aanmelden met Microsoft
+          </button>
+          <span className="loginVersion">Appversie {appVersion}</span>
+        </div>
         <Image
-          alt="1906 makers van charcuterie"
-          className="loginLogo"
-          height={112}
+          alt="Grillworst van 1906 makers van charcuterie"
+          className="loginProductPhoto"
+          height={360}
           priority
-          src="/brand/1906-round-logo.jpg"
-          width={112}
+          src="/brand/1906-grillworst-hero.jpg"
+          width={560}
         />
-        <p className="eyebrow">Beveiligde werkvloer-app</p>
-        <h1>Log in met Microsoft.</h1>
-        <p>
-          Alleen gebruikers uit de Microsoft 365-omgeving van 1906 makers van
-          charcuterie kunnen deze pilot openen.
-        </p>
-        {error && <p className="authError">{error}</p>}
-        <button className="submitButton red" onClick={onSignIn} type="button">
-          <LineIcon name="person" />
-          Aanmelden met Microsoft
-        </button>
-        <span className="loginVersion">Appversie {appVersion}</span>
       </section>
     </main>
   );
@@ -1565,13 +1585,23 @@ function WerkvloerFlow({
     return (
       <section className="mobileScreen heroScreen">
         <PilotNotice />
-        <div className="heroCopy">
-          <p className="eyebrow">Mobiele werkvloer-app</p>
-          <h1>Machinebeheer zonder omwegen.</h1>
-          <p>
-            Kies een afdeling, open een machinepaspoort en registreer snel wat er
-            speelt op de werkvloer.
-          </p>
+        <div className="heroIntro">
+          <div className="heroCopy">
+            <p className="eyebrow">Mobiele werkvloer-app</p>
+            <h1>Machinebeheer zonder omwegen.</h1>
+            <p>
+              Kies een afdeling, open een machinepaspoort en registreer snel wat er
+              speelt op de werkvloer.
+            </p>
+          </div>
+          <Image
+            alt="Biologische achterham van 1906 makers van charcuterie"
+            className="heroProductPhoto"
+            height={360}
+            priority
+            src="/brand/1906-achterham-hero.jpg"
+            width={560}
+          />
         </div>
         <div className="heroActions">
           <ActionButton icon="department" label="Afdeling kiezen" onClick={() => setFlowScreen("afdelingen")} />
