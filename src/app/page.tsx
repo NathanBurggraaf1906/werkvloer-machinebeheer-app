@@ -22,7 +22,7 @@ import type {
   Weekdag,
 } from "@/lib/types";
 
-const appVersion = "V1.4";
+const appVersion = "V1.5";
 const storageKey = "werkvloer-machinebeheer-v1";
 const microsoftClientId = "0d1f2e04-7363-408c-8d69-26516c6f1e98";
 const microsoftTenantId = "568c87e9-d6ed-4409-acab-1251c4d47545";
@@ -445,6 +445,10 @@ function idFromLookup(map: Map<string, string>, lookupId: string) {
 
 function idFromLookupTitle(map: Map<string, string>, lookupTitle: string) {
   return lookupTitle ? map.get(normalizeFieldName(lookupTitle)) ?? "" : "";
+}
+
+function onderhoudRecoveryKey(taak: Pick<Onderhoud, "datumGepland" | "machineId" | "title">) {
+  return [normalizeFieldName(taak.title), taak.machineId, taak.datumGepland].join("|");
 }
 
 function sharePointItemIdFromAppId(id: string) {
@@ -1099,6 +1103,8 @@ export default function Home() {
   const [machineFieldOverrides, setMachineFieldOverrides] = useState<Record<string, Partial<Machine>>>({});
   const [onderhoudOverrides, setOnderhoudOverrides] = useState<Onderhoud[] | null>(null);
   const [storingenOverrides, setStoringenOverrides] = useState<StoringOpmerking[] | null>(null);
+  const [recoveryNotice, setRecoveryNotice] = useState("");
+  const [isRecoveringOnderhoud, setIsRecoveringOnderhoud] = useState(false);
   const sourceData = sharePointData.status === "ready" ? sharePointData.data : localData;
   const data = useMemo(
     () => ({
@@ -1146,6 +1152,17 @@ export default function Home() {
   const selectedMachine = data.machines.find(
     (machine) => machine.id === selectedMachineId,
   );
+  const recoverableOnderhoud = useMemo(() => {
+    if (sharePointData.status !== "ready") return [];
+
+    const sharePointKeys = new Set(data.onderhoud.map(onderhoudRecoveryKey));
+    return localData.onderhoud.filter(
+      (taak) =>
+        !taak.id.startsWith("sp-onderhoud-") &&
+        taak.machineId.startsWith("sp-machine-") &&
+        !sharePointKeys.has(onderhoudRecoveryKey(taak)),
+    );
+  }, [data.onderhoud, localData.onderhoud, sharePointData.status]);
 
   function goHome() {
     setSection("werkvloer");
@@ -1185,6 +1202,29 @@ export default function Home() {
 
   async function deleteOnderhoudRecord(taak: Onderhoud) {
     await deleteOnderhoudInSharePoint(auth, taak);
+  }
+
+  async function recoverLocalOnderhoud() {
+    if (recoverableOnderhoud.length === 0) return;
+
+    setIsRecoveringOnderhoud(true);
+    setRecoveryNotice("");
+
+    try {
+      const savedTasks: Onderhoud[] = [];
+      for (const taak of recoverableOnderhoud) {
+        savedTasks.push(await saveOnderhoudRecord(taak));
+      }
+
+      const recoveredIds = new Set(recoverableOnderhoud.map((taak) => taak.id));
+      updateOnderhoudRecords([...savedTasks, ...data.onderhoud]);
+      updateEntity("onderhoud", localData.onderhoud.filter((taak) => !recoveredIds.has(taak.id)));
+      setRecoveryNotice(`${savedTasks.length} oude onderhoudstaak${savedTasks.length === 1 ? "" : "en"} teruggezet naar SharePoint.`);
+    } catch (error) {
+      setRecoveryNotice(error instanceof Error ? error.message : "Oude onderhoudstaken terugzetten naar SharePoint is niet gelukt.");
+    } finally {
+      setIsRecoveringOnderhoud(false);
+    }
   }
 
   function updateStoringenRecords(storingen: StoringOpmerking[]) {
@@ -1245,6 +1285,12 @@ export default function Home() {
       </header>
 
       <SharePointNotice state={sharePointData} />
+      <OnderhoudRecoveryNotice
+        count={recoverableOnderhoud.length}
+        isBusy={isRecoveringOnderhoud}
+        message={recoveryNotice}
+        onRecover={recoverLocalOnderhoud}
+      />
 
       {sharePointData.status !== "ready" && sharePointData.status !== "error" ? (
         <SharePointLoadingScreen />
@@ -2112,6 +2158,34 @@ function SharePointNotice({ state }: { state: SharePointState }) {
     <p className="dataNotice ready">
       <strong>SharePoint actief</strong>
       <span>Data wordt gelezen uit SharePoint.</span>
+    </p>
+  );
+}
+
+function OnderhoudRecoveryNotice({
+  count,
+  isBusy,
+  message,
+  onRecover,
+}: {
+  count: number;
+  isBusy: boolean;
+  message: string;
+  onRecover: () => void;
+}) {
+  if (!message && count === 0) return null;
+
+  return (
+    <p className={message && count === 0 ? "dataNotice ready" : "dataNotice recovery"}>
+      <strong>Herstel onderhoud</strong>
+      <span>
+        {message || `${count} lokale onderhoudstaak${count === 1 ? "" : "en"} gevonden die nog niet in SharePoint staan.`}
+      </span>
+      {count > 0 && (
+        <button className="smallButton recoveryButton" disabled={isBusy} onClick={onRecover} type="button">
+          {isBusy ? "Terugzetten..." : "Terugzetten"}
+        </button>
+      )}
     </p>
   );
 }

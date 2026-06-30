@@ -90,7 +90,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .dataNotice { margin: -8px auto 18px; max-width: 760px; }
 .dataNotice.loading { background: var(--gold-pale); border-color: rgba(162,144,97,.35); border-left-color: var(--gold); }
 .dataNotice.ready { background: #f0f8ef; border-color: rgba(21,128,61,.25); border-left-color: #15803d; }
+.dataNotice.recovery { background: #fffaf0; border-color: rgba(162,144,97,.45); border-left-color: var(--gold); }
 .dataNotice.error { background: var(--red-pale); border-left-color: var(--red); }
+.recoveryButton { flex: 0 0 auto; min-height: 38px; }
 .authShell { align-items: center; display: grid; justify-items: center; }
 .loadingScreen { align-items: center; display: grid; justify-items: center; }
 .loadingCard { background: linear-gradient(180deg, var(--white), #fffaf0); border: 2px solid var(--gold); border-left: 8px solid var(--red); border-radius: 8px; box-shadow: var(--shadow); display: grid; gap: 12px; max-width: 520px; padding: 28px; text-align: center; width: 100%; }
