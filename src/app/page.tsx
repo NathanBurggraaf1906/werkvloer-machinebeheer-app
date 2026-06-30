@@ -22,6 +22,7 @@ import type {
   Weekdag,
 } from "@/lib/types";
 
+const appVersion = "V1.1";
 const storageKey = "werkvloer-machinebeheer-v1";
 const machinePhotoStorageKey = "werkvloer-machinebeheer-machine-fotos-v1";
 const microsoftClientId = "0d1f2e04-7363-408c-8d69-26516c6f1e98";
@@ -1432,7 +1433,7 @@ function WerkvloerFlow({
       taak.id === taakId
         ? {
             ...taak,
-            datumUitgevoerd: status === "Voltooid" ? taak.datumUitgevoerd || vandaag : taak.datumUitgevoerd,
+            datumUitgevoerd: status === "Voltooid" ? taak.datumUitgevoerd || vandaag : "",
             status,
           }
         : taak,
@@ -1442,7 +1443,8 @@ function WerkvloerFlow({
   }
 
   function completeOnderhoud(taakId: string) {
-    updateOnderhoudStatus(taakId, "Voltooid");
+    const taak = data.onderhoud.find((item) => item.id === taakId);
+    updateOnderhoudStatus(taakId, taak?.status === "Voltooid" ? "Gepland" : "Voltooid");
   }
 
   function completeOnderhoudAndReturn(taakId: string) {
@@ -1883,7 +1885,7 @@ function SharePointNotice({ state }: { state: SharePointState }) {
 function PilotNotice() {
   return (
     <p className="pilotNotice">
-      <strong>Appversie V1 pilot</strong>
+      <strong>Appversie {appVersion}</strong>
       <span>Lezen uit SharePoint is actief. Nieuwe meldingen en wijzigingen worden in deze stap nog per apparaat/browser bewaard.</span>
     </p>
   );
@@ -2144,7 +2146,7 @@ function MaintenanceTaskList({
       {onderhoud.map((taak) => (
         <article className={`maintenanceCard ${taak.status === "Voltooid" ? "completed" : ""}`} key={taak.id}>
           <button
-            aria-label={taak.status === "Voltooid" ? "Taak voltooid" : "Taak als voltooid markeren"}
+            aria-label={taak.status === "Voltooid" ? "Taak terugzetten naar gepland" : "Taak als voltooid markeren"}
             className={`completeButton ${taak.status === "Voltooid" ? "done" : ""}`}
             onClick={(event) => {
               event.stopPropagation();
@@ -2152,7 +2154,7 @@ function MaintenanceTaskList({
             }}
             type="button"
           >
-            {taak.status === "Voltooid" ? "✓" : ""}
+            {taak.status === "Voltooid" ? String.fromCharCode(10003) : ""}
           </button>
           <button className="maintenanceSummary" onClick={() => onOpenTask(taak.id)} type="button">
             <span>
@@ -2660,7 +2662,7 @@ function StoringList({
         <article className={`recordCard alertCard ${item.status === "Opgelost" ? "resolved" : ""}`} key={item.id}>
           <div className="alertCardHeader">
             <span className={`alertStatus ${item.status === "Opgelost" ? "resolved" : ""}`}>
-              {item.status === "Opgelost" ? "✓ Opgelost" : item.status}
+              {item.status === "Opgelost" ? `${String.fromCharCode(10003)} Opgelost` : item.status}
             </span>
             <div className="alertCardActions">
               {onOpen && (
@@ -2670,7 +2672,7 @@ function StoringList({
               )}
               {onResolve && item.status !== "Opgelost" && (
                 <button className="smallButton resolveButton" onClick={() => onResolve(item.id)} type="button">
-                  ✓ Opgelost
+                  {String.fromCharCode(10003)} Opgelost
                 </button>
               )}
             </div>
