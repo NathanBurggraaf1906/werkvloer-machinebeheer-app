@@ -1441,7 +1441,7 @@ function WerkvloerFlow({
       datumUitgevoerd: "",
       id: createId("ond"),
       status: "Gepland" as Onderhoud["status"],
-      title: `${taak.title} - vervolg`,
+      title: taak.title.replace(/( - vervolg)+$/u, ""),
     };
   }
 
