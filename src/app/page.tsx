@@ -22,7 +22,7 @@ import type {
   Weekdag,
 } from "@/lib/types";
 
-const appVersion = "V1.3";
+const appVersion = "V1.4";
 const storageKey = "werkvloer-machinebeheer-v1";
 const microsoftClientId = "0d1f2e04-7363-408c-8d69-26516c6f1e98";
 const microsoftTenantId = "568c87e9-d6ed-4409-acab-1251c4d47545";
@@ -65,6 +65,12 @@ type SharePointList = { id: string; displayName?: string; name?: string };
 type SharePointColumn = { displayName?: string; name?: string };
 type SharePointDrive = { id: string; name?: string };
 type SharePointDriveItem = { id: string; name?: string; webUrl?: string };
+type SharePointListContext = {
+  accessToken: string;
+  columns: SharePointColumn[];
+  list: SharePointList;
+  siteId: string;
+};
 type MachinePhotoUploadResult = { document: MachineDocument; warning?: string };
 type MachineFieldUpdate = Pick<Machine, "status" | "verantwoordelijkeId">;
 type SharePointState =
@@ -467,6 +473,157 @@ function fileExtension(file: File) {
 function columnInternalName(columns: SharePointColumn[], displayName: string) {
   const normalized = normalizeFieldName(displayName);
   return columns.find((column) => normalizeFieldName(column.displayName ?? column.name ?? "") === normalized)?.name;
+}
+
+async function getSharePointListContext(auth: AuthState, listName: string): Promise<SharePointListContext> {
+  if (auth.status !== "signedIn") {
+    throw new Error("Je moet ingelogd zijn om naar SharePoint op te slaan.");
+  }
+
+  const accessToken = await getSharePointToken(auth.msal, auth.account);
+  const site = await graphFetch<{ id: string }>(
+    `/sites/${sharePointHost}:${sharePointSitePath}`,
+    accessToken,
+  );
+  const lists = await graphFetch<{ value: SharePointList[] }>(
+    `/sites/${site.id}/lists?$select=id,displayName,name`,
+    accessToken,
+  );
+  const list = lists.value.find((item) => item.displayName === listName || item.name === listName);
+
+  if (!list) {
+    throw new Error(`SharePoint-lijst '${listName}' is niet gevonden.`);
+  }
+
+  const columns = await graphFetch<{ value: SharePointColumn[] }>(
+    `/sites/${site.id}/lists/${list.id}/columns?$select=name,displayName`,
+    accessToken,
+  );
+
+  return {
+    accessToken,
+    columns: columns.value,
+    list,
+    siteId: site.id,
+  };
+}
+
+function setFieldIfFound(
+  fields: Record<string, string | number | null>,
+  columns: SharePointColumn[],
+  displayName: string,
+  value: string | number | null,
+) {
+  const internalName = columnInternalName(columns, displayName);
+  if (internalName) fields[internalName] = value;
+}
+
+function setLookupIfFound(
+  fields: Record<string, string | number | null>,
+  columns: SharePointColumn[],
+  displayName: string,
+  appId: string,
+  allowNull = true,
+) {
+  const internalName = columnInternalName(columns, displayName);
+  if (!internalName) return;
+
+  const itemId = sharePointItemIdFromAppId(appId);
+  if (itemId) {
+    fields[`${internalName}LookupId`] = Number(itemId);
+  } else if (allowNull) {
+    fields[`${internalName}LookupId`] = null;
+  }
+}
+
+function onderhoudFieldsForSharePoint(taak: Onderhoud, columns: SharePointColumn[]) {
+  const fields: Record<string, string | number | null> = {
+    Title: taak.title,
+  };
+
+  setLookupIfFound(fields, columns, "Machine", taak.machineId, false);
+  setLookupIfFound(
+    fields,
+    columns,
+    "Verantwoordelijke persoon",
+    taak.verantwoordelijkeType === "Persoon" ? taak.verantwoordelijkeRefId : "",
+  );
+  setLookupIfFound(
+    fields,
+    columns,
+    "Verantwoordelijke leverancier",
+    taak.verantwoordelijkeType === "Leverancier" ? taak.verantwoordelijkeRefId : "",
+  );
+  setFieldIfFound(fields, columns, "Datum gepland", taak.datumGepland || null);
+  setFieldIfFound(fields, columns, "Datum uitgevoerd", taak.datumUitgevoerd || null);
+  setFieldIfFound(fields, columns, "Type onderhoud", taak.typeOnderhoud);
+  setFieldIfFound(fields, columns, "Status", taak.status);
+  setFieldIfFound(fields, columns, "Herhaling", taak.herhaling);
+  setFieldIfFound(fields, columns, "Herhaling weekdag", taak.herhalingWeekdag);
+  setFieldIfFound(fields, columns, "Herhalen tot", taak.herhalingTot || null);
+  setFieldIfFound(fields, columns, "Opmerking", taak.opmerking);
+
+  return fields;
+}
+
+async function createOnderhoudInSharePoint(auth: AuthState, taak: Onderhoud) {
+  const context = await getSharePointListContext(auth, "Onderhoud");
+  const created = await graphFetchRaw(
+    `/sites/${context.siteId}/lists/${context.list.id}/items`,
+    context.accessToken,
+    {
+      body: JSON.stringify({
+        fields: onderhoudFieldsForSharePoint(taak, context.columns),
+      }),
+      headers: {
+        "Content-Type": "application/json",
+      },
+      method: "POST",
+    },
+  ) as SharePointListItem;
+
+  return {
+    ...taak,
+    id: created.id ? `sp-onderhoud-${created.id}` : taak.id,
+  };
+}
+
+async function updateOnderhoudInSharePoint(auth: AuthState, taak: Onderhoud) {
+  if (!taak.id.startsWith("sp-onderhoud-")) return createOnderhoudInSharePoint(auth, taak);
+
+  const itemId = sharePointItemIdFromAppId(taak.id);
+  if (!itemId) return createOnderhoudInSharePoint(auth, taak);
+
+  const context = await getSharePointListContext(auth, "Onderhoud");
+  await graphFetchRaw(
+    `/sites/${context.siteId}/lists/${context.list.id}/items/${itemId}/fields`,
+    context.accessToken,
+    {
+      body: JSON.stringify(onderhoudFieldsForSharePoint(taak, context.columns)),
+      headers: {
+        "Content-Type": "application/json",
+      },
+      method: "PATCH",
+    },
+  );
+
+  return taak;
+}
+
+async function deleteOnderhoudInSharePoint(auth: AuthState, taak: Onderhoud) {
+  if (!taak.id.startsWith("sp-onderhoud-")) return;
+
+  const itemId = sharePointItemIdFromAppId(taak.id);
+  if (!itemId) return;
+
+  const context = await getSharePointListContext(auth, "Onderhoud");
+  await graphFetchRaw(
+    `/sites/${context.siteId}/lists/${context.list.id}/items/${itemId}`,
+    context.accessToken,
+    {
+      method: "DELETE",
+    },
+  );
 }
 
 async function fetchListItems(
@@ -1022,6 +1179,14 @@ export default function Home() {
     updateEntity("onderhoud", onderhoud);
   }
 
+  async function saveOnderhoudRecord(taak: Onderhoud) {
+    return updateOnderhoudInSharePoint(auth, taak);
+  }
+
+  async function deleteOnderhoudRecord(taak: Onderhoud) {
+    await deleteOnderhoudInSharePoint(auth, taak);
+  }
+
   function updateStoringenRecords(storingen: StoringOpmerking[]) {
     setStoringenOverrides(storingen);
     updateEntity("storingen", storingen);
@@ -1100,6 +1265,8 @@ export default function Home() {
           updateMachinePassport={updateMachinePassport}
           updateDocumenten={(documenten) => updateEntity("documenten", documenten)}
           uploadMachinePhoto={uploadMachinePhoto}
+          saveOnderhoudTask={saveOnderhoudRecord}
+          deleteOnderhoudTask={deleteOnderhoudRecord}
           updateOnderhoud={updateOnderhoudRecords}
           updateStoringen={updateStoringenRecords}
         />
@@ -1230,6 +1397,8 @@ function WerkvloerFlow({
   updateMachinePassport,
   updateDocumenten,
   uploadMachinePhoto,
+  saveOnderhoudTask,
+  deleteOnderhoudTask,
   updateOnderhoud,
   updateStoringen,
 }: {
@@ -1248,6 +1417,8 @@ function WerkvloerFlow({
   updateMachinePassport: (machine: Machine, update: MachineFieldUpdate) => Promise<void>;
   updateDocumenten: (documenten: MachineDocument[]) => void;
   uploadMachinePhoto: (machine: Machine, file: File) => Promise<MachinePhotoUploadResult>;
+  saveOnderhoudTask: (taak: Onderhoud) => Promise<Onderhoud>;
+  deleteOnderhoudTask: (taak: Onderhoud) => Promise<void>;
   updateOnderhoud: (onderhoud: Onderhoud[]) => void;
   updateStoringen: (storingen: StoringOpmerking[]) => void;
 }) {
@@ -1380,7 +1551,7 @@ function WerkvloerFlow({
     updateDocumenten(bijgewerkt);
   }
 
-  function addOnderhoud(formData: FormData) {
+  async function addOnderhoud(formData: FormData) {
     if (!selectedMachine) return;
     const responsible = parseResponsibleValue(String(formData.get("verantwoordelijke") || `Persoon:${selectedMachine.verantwoordelijkeId || data.personen[0]?.id || ""}`));
 
@@ -1402,37 +1573,48 @@ function WerkvloerFlow({
       opmerking: String(formData.get("opmerking") || ""),
     };
 
-    updateOnderhoud([taak, ...data.onderhoud]);
-    setEditingOnderhoudId("");
-    setFlowScreen("onderhoud");
+    try {
+      const savedTaak = await saveOnderhoudTask(taak);
+      updateOnderhoud([savedTaak, ...data.onderhoud]);
+      setSaveNotice("Onderhoudstaak opgeslagen in SharePoint.");
+      setEditingOnderhoudId("");
+      setFlowScreen("onderhoud");
+    } catch (error) {
+      setSaveNotice(error instanceof Error ? error.message : "Onderhoudstaak opslaan in SharePoint is niet gelukt.");
+    }
   }
 
-  function editOnderhoud(taakId: string, formData: FormData) {
+  async function editOnderhoud(taakId: string, formData: FormData) {
     const responsible = parseResponsibleValue(String(formData.get("verantwoordelijke") || ""));
-    const bijgewerkt = data.onderhoud.map((taak) =>
-      taak.id === taakId
-        ? {
-            ...taak,
-            title: String(formData.get("title") || taak.title),
-            datumGepland: String(formData.get("datumGepland") || ""),
-            datumUitgevoerd: String(formData.get("datumUitgevoerd") || ""),
-            typeOnderhoud: String(formData.get("typeOnderhoud") || taak.typeOnderhoud) as Onderhoud["typeOnderhoud"],
-            verantwoordelijkeId: responsible.type === "Persoon" ? responsible.id : "",
-            verantwoordelijkeType: responsible.type,
-            verantwoordelijkeRefId: responsible.id,
-            leverancierId: responsible.type === "Leverancier" ? responsible.id : taak.leverancierId,
-            status: String(formData.get("status") || taak.status) as Onderhoud["status"],
-            herhaling: String(formData.get("herhaling") || "Geen") as Onderhoud["herhaling"],
-            herhalingWeekdag: String(formData.get("herhalingWeekdag") || "Maandag") as Weekdag,
-            herhalingTot: "",
-            opmerking: String(formData.get("opmerking") || ""),
-          }
-        : taak,
-    );
+    const taakVoorUpdate = data.onderhoud.find((taak) => taak.id === taakId);
+    if (!taakVoorUpdate) return;
 
-    updateOnderhoud(bijgewerkt);
-    setEditingOnderhoudId("");
-    setFlowScreen("onderhoud");
+    const bijgewerkteTaak: Onderhoud = {
+      ...taakVoorUpdate,
+      title: String(formData.get("title") || taakVoorUpdate.title),
+      datumGepland: String(formData.get("datumGepland") || ""),
+      datumUitgevoerd: String(formData.get("datumUitgevoerd") || ""),
+      typeOnderhoud: String(formData.get("typeOnderhoud") || taakVoorUpdate.typeOnderhoud) as Onderhoud["typeOnderhoud"],
+      verantwoordelijkeId: responsible.type === "Persoon" ? responsible.id : "",
+      verantwoordelijkeType: responsible.type,
+      verantwoordelijkeRefId: responsible.id,
+      leverancierId: responsible.type === "Leverancier" ? responsible.id : taakVoorUpdate.leverancierId,
+      status: String(formData.get("status") || taakVoorUpdate.status) as Onderhoud["status"],
+      herhaling: String(formData.get("herhaling") || "Geen") as Onderhoud["herhaling"],
+      herhalingWeekdag: String(formData.get("herhalingWeekdag") || "Maandag") as Weekdag,
+      herhalingTot: "",
+      opmerking: String(formData.get("opmerking") || ""),
+    };
+
+    try {
+      const savedTaak = await saveOnderhoudTask(bijgewerkteTaak);
+      updateOnderhoud(data.onderhoud.map((taak) => (taak.id === taakId ? savedTaak : taak)));
+      setSaveNotice("Onderhoudstaak bijgewerkt in SharePoint.");
+      setEditingOnderhoudId("");
+      setFlowScreen("onderhoud");
+    } catch (error) {
+      setSaveNotice(error instanceof Error ? error.message : "Onderhoudstaak bijwerken in SharePoint is niet gelukt.");
+    }
   }
 
   function createFollowUpOnderhoud(taak: Onderhoud, datumUitgevoerd?: string) {
@@ -1450,56 +1632,75 @@ function WerkvloerFlow({
     };
   }
 
-  function updateOnderhoudStatus(taakId: string, status: Onderhoud["status"]) {
+  async function updateOnderhoudStatus(taakId: string, status: Onderhoud["status"]) {
     const vandaag = getTodayValue();
     const taakVoorUpdate = data.onderhoud.find((taak) => taak.id === taakId);
+    if (!taakVoorUpdate) return;
+
     const wordtNetVoltooid = status === "Voltooid" && taakVoorUpdate?.status !== "Voltooid";
     const datumUitgevoerd = status === "Voltooid" ? taakVoorUpdate?.datumUitgevoerd || vandaag : "";
-    const vervolgTaak = wordtNetVoltooid && taakVoorUpdate ? createFollowUpOnderhoud(taakVoorUpdate, datumUitgevoerd) : null;
-    const bijgewerkt = data.onderhoud.map((taak) =>
-      taak.id === taakId
-        ? {
-            ...taak,
-            datumUitgevoerd,
-            status,
-          }
-        : taak,
-    );
+    const bijgewerkteTaak = {
+      ...taakVoorUpdate,
+      datumUitgevoerd,
+      status,
+    };
+    const vervolgTaak = wordtNetVoltooid ? createFollowUpOnderhoud(taakVoorUpdate, datumUitgevoerd) : null;
 
-    updateOnderhoud(vervolgTaak ? [vervolgTaak, ...bijgewerkt] : bijgewerkt);
+    try {
+      const savedTaak = await saveOnderhoudTask(bijgewerkteTaak);
+      const savedVervolgTaak = vervolgTaak ? await saveOnderhoudTask(vervolgTaak) : null;
+      const bijgewerkt = data.onderhoud.map((taak) => (taak.id === taakId ? savedTaak : taak));
+
+      updateOnderhoud(savedVervolgTaak ? [savedVervolgTaak, ...bijgewerkt] : bijgewerkt);
+      setSaveNotice(status === "Voltooid" ? "Taak voltooid en opgeslagen in SharePoint." : "Taakstatus opgeslagen in SharePoint.");
+    } catch (error) {
+      setSaveNotice(error instanceof Error ? error.message : "Taakstatus opslaan in SharePoint is niet gelukt.");
+    }
   }
 
-  function completeOnderhoud(taakId: string) {
+  async function completeOnderhoud(taakId: string) {
     const taak = data.onderhoud.find((item) => item.id === taakId);
-    updateOnderhoudStatus(taakId, taak?.status === "Voltooid" ? "Gepland" : "Voltooid");
+    await updateOnderhoudStatus(taakId, taak?.status === "Voltooid" ? "Gepland" : "Voltooid");
   }
 
-  function completeOnderhoudAndReturn(taakId: string) {
-    updateOnderhoudStatus(taakId, "Voltooid");
+  async function completeOnderhoudAndReturn(taakId: string) {
+    await updateOnderhoudStatus(taakId, "Voltooid");
     setEditingOnderhoudId("");
     setFlowScreen("onderhoud");
   }
 
-  function deleteOnderhoud(taakId: string) {
+  async function deleteOnderhoud(taakId: string) {
     const taak = data.onderhoud.find((item) => item.id === taakId);
     if (!taak) return;
     const confirmed = window.confirm(`Onderhoudstaak "${taak.title}" verwijderen?`);
     if (!confirmed) return;
 
-    updateOnderhoud(data.onderhoud.filter((item) => item.id !== taakId));
-    setEditingOnderhoudId("");
-    setFlowScreen("onderhoud");
+    try {
+      await deleteOnderhoudTask(taak);
+      updateOnderhoud(data.onderhoud.filter((item) => item.id !== taakId));
+      setSaveNotice("Onderhoudstaak verwijderd uit SharePoint.");
+      setEditingOnderhoudId("");
+      setFlowScreen("onderhoud");
+    } catch (error) {
+      setSaveNotice(error instanceof Error ? error.message : "Onderhoudstaak verwijderen uit SharePoint is niet gelukt.");
+    }
   }
 
-  function rescheduleOnderhoud(taak: Onderhoud) {
+  async function rescheduleOnderhoud(taak: Onderhoud) {
     if (!selectedMachine) return;
 
     const nieuweTaak = createFollowUpOnderhoud({ ...taak, machineId: selectedMachine.id });
     if (!nieuweTaak) return;
 
-    updateOnderhoud([nieuweTaak, ...data.onderhoud]);
-    setEditingOnderhoudId(nieuweTaak.id);
-    setFlowScreen("onderhoudDetail");
+    try {
+      const savedTaak = await saveOnderhoudTask(nieuweTaak);
+      updateOnderhoud([savedTaak, ...data.onderhoud]);
+      setSaveNotice("Nieuwe planning opgeslagen in SharePoint.");
+      setEditingOnderhoudId(savedTaak.id);
+      setFlowScreen("onderhoudDetail");
+    } catch (error) {
+      setSaveNotice(error instanceof Error ? error.message : "Nieuwe planning opslaan in SharePoint is niet gelukt.");
+    }
   }
 
   function openOnderhoudDetail(taakId: string) {
@@ -2110,7 +2311,7 @@ function OnderhoudPanel({
   personen: Persoon[];
   leveranciers: Leverancier[];
   verantwoordelijke?: Persoon;
-  onComplete: (taakId: string) => void;
+  onComplete: (taakId: string) => void | Promise<void>;
   onCreate: () => void;
   onOpenAgenda: () => void;
   onOpenTask: (taakId: string) => void;
@@ -2167,7 +2368,7 @@ function MaintenanceTaskList({
   onderhoud: Onderhoud[];
   personen: Persoon[];
   leveranciers: Leverancier[];
-  onComplete: (taakId: string) => void;
+  onComplete: (taakId: string) => void | Promise<void>;
   onOpenTask: (taakId: string) => void;
 }) {
   if (onderhoud.length === 0) {
@@ -2287,11 +2488,11 @@ function OnderhoudDetailView({
   defaultResponsibleId: string;
   leveranciers: Leverancier[];
   onCancel: () => void;
-  onCompleteAndReturn: (taakId: string) => void;
-  onDelete: (taakId: string) => void;
-  onCreate: (formData: FormData) => void;
-  onEdit: (taakId: string, formData: FormData) => void;
-  onReschedule: (taak: Onderhoud) => void;
+  onCompleteAndReturn: (taakId: string) => void | Promise<void>;
+  onDelete: (taakId: string) => void | Promise<void>;
+  onCreate: (formData: FormData) => void | Promise<void>;
+  onEdit: (taakId: string, formData: FormData) => void | Promise<void>;
+  onReschedule: (taak: Onderhoud) => void | Promise<void>;
   personen: Persoon[];
   taak?: Onderhoud;
 }) {
@@ -2331,16 +2532,16 @@ function OnderhoudForm({
   leveranciers: Leverancier[];
   mode: "create" | "edit";
   onCancel?: () => void;
-  onSubmit: (formData: FormData) => void;
+  onSubmit: (formData: FormData) => void | Promise<void>;
   personen: Persoon[];
   taak?: Onderhoud;
 }) {
   const [herhaling, setHerhaling] = useState<Onderhoud["herhaling"]>(taak?.herhaling ?? "Geen");
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
-    onSubmit(new FormData(form));
+    await onSubmit(new FormData(form));
     if (mode === "create") form.reset();
   }
 
