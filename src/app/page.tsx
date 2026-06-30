@@ -6,7 +6,7 @@ import {
   InteractionRequiredAuthError,
   PublicClientApplication,
 } from "@azure/msal-browser";
-import { FormEvent, MouseEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import { initialData } from "@/lib/seed-data";
 import type {
   Afdeling,
@@ -24,7 +24,6 @@ import type {
 
 const appVersion = "V1.1";
 const storageKey = "werkvloer-machinebeheer-v1";
-const machinePhotoStorageKey = "werkvloer-machinebeheer-machine-fotos-v1";
 const microsoftClientId = "0d1f2e04-7363-408c-8d69-26516c6f1e98";
 const microsoftTenantId = "568c87e9-d6ed-4409-acab-1251c4d47545";
 const graphScopes = ["User.Read", "Sites.ReadWrite.All"];
@@ -218,22 +217,7 @@ function useAppData() {
 }
 
 function useMachinePhotoOverrides() {
-  const [photos, setPhotos] = useState<Record<string, string>>(() => {
-    if (typeof window === "undefined") return {};
-
-    const saved = window.localStorage.getItem(machinePhotoStorageKey);
-    if (!saved) return {};
-
-    try {
-      return JSON.parse(saved) as Record<string, string>;
-    } catch {
-      return {};
-    }
-  });
-
-  useEffect(() => {
-    window.localStorage.setItem(machinePhotoStorageKey, JSON.stringify(photos));
-  }, [photos]);
+  const [photos, setPhotos] = useState<Record<string, string>>({});
 
   function updateMachinePhoto(machineId: string, photoUrl: string) {
     setPhotos((current) => ({ ...current, [machineId]: photoUrl }));
@@ -863,7 +847,7 @@ async function uploadMachinePhotoToSharePoint(
       machineId: machine.id,
       omschrijving: `Machinefoto voor ${machine.title}`,
       title: uploaded.name ?? fileName,
-      url: await blobToDataUrl(file),
+      url: uploaded.webUrl ?? "",
       vervaldatum: "",
     },
     warning,
@@ -1016,8 +1000,9 @@ export default function Home() {
 
   async function uploadMachinePhoto(machine: Machine, file: File) {
     const result = await uploadMachinePhotoToSharePoint(auth, machine, file);
-    updateMachinePhoto(machine.id, result.document.url);
-    updateEntity("documenten", [result.document, ...data.documenten]);
+    const previewUrl = URL.createObjectURL(file);
+    updateMachinePhoto(machine.id, previewUrl);
+    updateEntity("documenten", [{ ...result.document, url: previewUrl }, ...data.documenten]);
     return result;
   }
 
@@ -1393,7 +1378,7 @@ function WerkvloerFlow({
       status: String(formData.get("status") || "Gepland") as Onderhoud["status"],
       herhaling: String(formData.get("herhaling") || "Geen") as Onderhoud["herhaling"],
       herhalingWeekdag: String(formData.get("herhalingWeekdag") || "Maandag") as Weekdag,
-      herhalingTot: String(formData.get("herhalingTot") || ""),
+      herhalingTot: "",
       opmerking: String(formData.get("opmerking") || ""),
     };
 
@@ -1419,7 +1404,7 @@ function WerkvloerFlow({
             status: String(formData.get("status") || taak.status) as Onderhoud["status"],
             herhaling: String(formData.get("herhaling") || "Geen") as Onderhoud["herhaling"],
             herhalingWeekdag: String(formData.get("herhalingWeekdag") || "Maandag") as Weekdag,
-            herhalingTot: String(formData.get("herhalingTot") || ""),
+            herhalingTot: "",
             opmerking: String(formData.get("opmerking") || ""),
           }
         : taak,
@@ -2330,12 +2315,6 @@ function OnderhoudForm({
 }) {
   const [herhaling, setHerhaling] = useState<Onderhoud["herhaling"]>(taak?.herhaling ?? "Geen");
 
-  function openDatePicker(event: MouseEvent<HTMLLabelElement>) {
-    const input = event.currentTarget.querySelector("input");
-    input?.focus();
-    input?.showPicker?.();
-  }
-
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -2347,8 +2326,8 @@ function OnderhoudForm({
     <form className="entryForm" onSubmit={handleSubmit}>
       <h2><LineIcon name="maintenance" /> {mode === "edit" ? "Onderhoudstaak bewerken" : "Onderhoudstaak maken"}</h2>
       <label>Titel<input name="title" defaultValue={taak?.title ?? ""} placeholder="Bijvoorbeeld: messen controleren" required /></label>
-      <label onClick={openDatePicker}>Datum gepland<input name="datumGepland" type="date" defaultValue={taak?.datumGepland ?? ""} /></label>
-      <label onClick={openDatePicker}>Datum uitgevoerd<input name="datumUitgevoerd" type="date" defaultValue={taak?.datumUitgevoerd ?? ""} /></label>
+      <label>Datum gepland<input name="datumGepland" type="date" defaultValue={taak?.datumGepland ?? ""} /></label>
+      <label>Datum uitgevoerd<input name="datumUitgevoerd" type="date" defaultValue={taak?.datumUitgevoerd ?? ""} /></label>
       <label>Type onderhoud<select name="typeOnderhoud" defaultValue={taak?.typeOnderhoud ?? "Preventief"}><option>Preventief</option><option>Correctief</option><option>Keuring</option><option>Schoonmaak</option></select></label>
       <label>Verantwoordelijke
         <select name="verantwoordelijke" defaultValue={taak ? getResponsibleValue(taak) : `Persoon:${defaultResponsibleId || personen[0]?.id || ""}`}>
@@ -2365,7 +2344,6 @@ function OnderhoudForm({
       {herhaling !== "Geen" && (
         <>
           <label>Eerste weekdag<select name="herhalingWeekdag" defaultValue={taak?.herhalingWeekdag ?? "Maandag"}>{weekdagen.map((weekdag) => <option key={weekdag}>{weekdag}</option>)}</select></label>
-          <label onClick={openDatePicker}>Herhalen tot<input name="herhalingTot" type="date" defaultValue={taak?.herhalingTot ?? ""} /></label>
         </>
       )}
       <label>Opmerking<textarea name="opmerking" rows={3} defaultValue={taak?.opmerking ?? ""} placeholder="Wat moet er gebeuren?" /></label>

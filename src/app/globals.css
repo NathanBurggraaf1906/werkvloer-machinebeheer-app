@@ -140,7 +140,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .sectionTitleBar .lineIcon { color: var(--red); height: 22px; width: 22px; }
 .machinePhotoPanel { overflow: hidden; }
 .machinePhoto, .machinePhotoPlaceholder { border-radius: 6px; height: clamp(280px, 62vw, 520px); width: 100%; }
-.machinePhoto { background: var(--white); display: block; object-fit: contain; object-position: center; }
+.machinePhoto { background: transparent; display: block; mix-blend-mode: multiply; object-fit: contain; object-position: center; }
 .machinePhotoPlaceholder { align-items: center; background: linear-gradient(135deg, var(--gold-pale), var(--red-pale)); border: 1px dashed var(--gold); color: var(--gold); display: grid; gap: 8px; justify-items: center; min-height: 220px; padding: 24px; text-align: center; }
 .machinePhotoPlaceholder .lineIcon { color: var(--red); height: 44px; width: 44px; }
 .machinePhotoPlaceholder span { color: var(--muted); font-weight: 700; }
