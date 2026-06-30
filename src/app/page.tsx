@@ -22,7 +22,7 @@ import type {
   Weekdag,
 } from "@/lib/types";
 
-const appVersion = "V1.2";
+const appVersion = "V1.3";
 const storageKey = "werkvloer-machinebeheer-v1";
 const microsoftClientId = "0d1f2e04-7363-408c-8d69-26516c6f1e98";
 const microsoftTenantId = "568c87e9-d6ed-4409-acab-1251c4d47545";
@@ -1186,11 +1186,11 @@ function LoginScreen({ error, onSignIn }: { error?: string; onSignIn: () => void
           <span className="loginVersion">Appversie {appVersion}</span>
         </div>
         <Image
-          alt="Grillworst van 1906 makers van charcuterie"
+          alt="Biologische achterham van 1906 makers van charcuterie"
           className="loginProductPhoto"
           height={360}
           priority
-          src="/brand/1906-grillworst-hero.jpg"
+          src="/brand/1906-achterham-hero.jpg"
           width={560}
         />
       </section>
@@ -1594,14 +1594,6 @@ function WerkvloerFlow({
               speelt op de werkvloer.
             </p>
           </div>
-          <Image
-            alt="Biologische achterham van 1906 makers van charcuterie"
-            className="heroProductPhoto"
-            height={360}
-            priority
-            src="/brand/1906-achterham-hero.jpg"
-            width={560}
-          />
         </div>
         <div className="heroActions">
           <ActionButton icon="department" label="Afdeling kiezen" onClick={() => setFlowScreen("afdelingen")} />

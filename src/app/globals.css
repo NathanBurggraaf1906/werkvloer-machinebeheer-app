@@ -65,8 +65,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .heroScreen {
   background:
     linear-gradient(90deg, var(--black) 0 18px, transparent 18px),
+    linear-gradient(180deg, rgba(255,253,248,.88), rgba(246,240,223,.84)),
     linear-gradient(180deg, rgba(162,144,97,.28), transparent 58%),
     linear-gradient(135deg, transparent 0 70%, rgba(225,6,0,.16) 70% 100%),
+    url("/brand/1906-grillworst-hero.jpg") center / cover no-repeat,
     var(--panel);
   border-top-color: var(--red);
   display: grid;
@@ -75,11 +77,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   justify-items: center;
   min-height: 560px;
 }
-.heroIntro { align-items: stretch; display: grid; gap: 0; grid-template-columns: minmax(0, 1.05fr) minmax(220px, .95fr); max-width: 650px; width: 100%; }
-.heroCopy { background: var(--white); border: 2px solid var(--gold); border-left: 8px solid var(--red); border-radius: 8px; box-shadow: 0 12px 0 rgba(162,144,97,.2); max-width: 560px; padding: 22px; text-align: center; width: 100%; }
+.heroIntro { align-items: stretch; display: grid; max-width: 560px; width: 100%; }
+.heroCopy { background: rgba(255,255,255,.92); border: 2px solid var(--gold); border-left: 8px solid var(--red); border-radius: 8px; box-shadow: 0 12px 0 rgba(162,144,97,.2); max-width: 560px; padding: 22px; text-align: center; width: 100%; }
 .heroCopy h1, .screenHeader h1 { color: var(--black); font-size: 44px; line-height: .98; margin-bottom: 14px; }
 .heroCopy p { color: var(--muted); font-size: 19px; line-height: 1.45; }
-.heroProductPhoto { align-self: center; border: 1px solid rgba(162,144,97,.35); border-radius: 8px; box-shadow: 0 14px 28px rgba(0,0,0,.1); height: 100%; max-height: 250px; min-height: 220px; object-fit: cover; object-position: center; transform: translateX(-8px); width: 100%; }
 .heroActions { align-self: start; display: grid; gap: 14px; margin-top: 0; max-width: 620px; width: 100%; }
 .pilotNotice, .saveNotice, .dataNotice { background: var(--red-pale); border: 1px solid rgba(225,6,0,.25); border-left: 6px solid var(--red); border-radius: 8px; color: var(--black); font-size: 15px; line-height: 1.35; padding: 12px 14px; }
 .pilotNotice, .dataNotice { align-items: center; display: flex; gap: 10px; justify-content: space-between; width: 100%; }
@@ -328,7 +329,6 @@ td input[type="checkbox"] { min-height: 22px; width: 22px; }
   .heroCopy { padding: 18px 14px; }
   .heroCopy h1, .screenHeader h1 { font-size: 32px; }
   .heroCopy p { font-size: 17px; }
-  .heroProductPhoto { max-height: 150px; min-height: 140px; transform: translateY(-4px); }
   .loginCard { grid-template-columns: 1fr; max-width: 560px; padding: 22px 16px; }
   .loginCard h1 { font-size: 34px; }
   .loginProductPhoto { max-height: 180px; min-height: 160px; order: -1; }
