@@ -1144,6 +1144,8 @@ function AuthShell({ message }: { message: string }) {
         />
         <p className="eyebrow">Werkvloer Machinebeheer</p>
         <h1>{message}</h1>
+
+        <span className="loginVersion">Appversie {appVersion}</span>
       </section>
     </main>
   );
@@ -1185,6 +1187,7 @@ function LoginScreen({ error, onSignIn }: { error?: string; onSignIn: () => void
           <LineIcon name="person" />
           Aanmelden met Microsoft
         </button>
+        <span className="loginVersion">Appversie {appVersion}</span>
       </section>
     </main>
   );
@@ -1427,19 +1430,38 @@ function WerkvloerFlow({
     setFlowScreen("onderhoud");
   }
 
+  function createFollowUpOnderhoud(taak: Onderhoud, datumUitgevoerd?: string) {
+    const afgerondeTaak = datumUitgevoerd ? { ...taak, datumUitgevoerd } : taak;
+    const nextDate = getNextOnderhoudDate(afgerondeTaak);
+    if (taak.herhaling === "Geen" || (taak.herhalingTot && nextDate > taak.herhalingTot)) return null;
+
+    return {
+      ...taak,
+      datumGepland: nextDate,
+      datumUitgevoerd: "",
+      id: createId("ond"),
+      status: "Gepland" as Onderhoud["status"],
+      title: `${taak.title} - vervolg`,
+    };
+  }
+
   function updateOnderhoudStatus(taakId: string, status: Onderhoud["status"]) {
     const vandaag = getTodayValue();
+    const taakVoorUpdate = data.onderhoud.find((taak) => taak.id === taakId);
+    const wordtNetVoltooid = status === "Voltooid" && taakVoorUpdate?.status !== "Voltooid";
+    const datumUitgevoerd = status === "Voltooid" ? taakVoorUpdate?.datumUitgevoerd || vandaag : "";
+    const vervolgTaak = wordtNetVoltooid && taakVoorUpdate ? createFollowUpOnderhoud(taakVoorUpdate, datumUitgevoerd) : null;
     const bijgewerkt = data.onderhoud.map((taak) =>
       taak.id === taakId
         ? {
             ...taak,
-            datumUitgevoerd: status === "Voltooid" ? taak.datumUitgevoerd || vandaag : "",
+            datumUitgevoerd,
             status,
           }
         : taak,
     );
 
-    updateOnderhoud(bijgewerkt);
+    updateOnderhoud(vervolgTaak ? [vervolgTaak, ...bijgewerkt] : bijgewerkt);
   }
 
   function completeOnderhoud(taakId: string) {
@@ -1453,19 +1475,22 @@ function WerkvloerFlow({
     setFlowScreen("onderhoud");
   }
 
+  function deleteOnderhoud(taakId: string) {
+    const taak = data.onderhoud.find((item) => item.id === taakId);
+    if (!taak) return;
+    const confirmed = window.confirm(`Onderhoudstaak "${taak.title}" verwijderen?`);
+    if (!confirmed) return;
+
+    updateOnderhoud(data.onderhoud.filter((item) => item.id !== taakId));
+    setEditingOnderhoudId("");
+    setFlowScreen("onderhoud");
+  }
+
   function rescheduleOnderhoud(taak: Onderhoud) {
     if (!selectedMachine) return;
 
-    const nextDate = getNextOnderhoudDate(taak);
-    const nieuweTaak: Onderhoud = {
-      ...taak,
-      datumGepland: nextDate,
-      datumUitgevoerd: "",
-      id: createId("ond"),
-      machineId: selectedMachine.id,
-      status: "Gepland",
-      title: `${taak.title} - vervolg`,
-    };
+    const nieuweTaak = createFollowUpOnderhoud({ ...taak, machineId: selectedMachine.id });
+    if (!nieuweTaak) return;
 
     updateOnderhoud([nieuweTaak, ...data.onderhoud]);
     setEditingOnderhoudId(nieuweTaak.id);
@@ -1779,6 +1804,7 @@ function WerkvloerFlow({
             onEdit={editOnderhoud}
             onReschedule={rescheduleOnderhoud}
             onCompleteAndReturn={completeOnderhoudAndReturn}
+            onDelete={deleteOnderhoud}
             personen={data.personen}
             taak={editingOnderhoud?.machineId === selectedMachine.id ? editingOnderhoud : undefined}
           />
@@ -2089,7 +2115,7 @@ function OnderhoudPanel({
       <section className="maintenanceHero">
         <p className="eyebrow">Machine</p>
         <h2>{machine.title}</h2>
-        <p>Verantwoordelijke machine: <strong>{verantwoordelijke?.title ?? "-"}</strong></p>
+        <p className="responsibleLine">Verantwoordelijke persoon: <strong>{verantwoordelijke?.title ?? "-"}</strong></p>
       </section>
       <MaintenanceStats onderhoud={onderhoud} />
       <section className="maintenanceActions">
@@ -2245,6 +2271,7 @@ function OnderhoudDetailView({
   onCancel,
   onCompleteAndReturn,
   onCreate,
+  onDelete,
   onEdit,
   onReschedule,
   personen,
@@ -2254,6 +2281,7 @@ function OnderhoudDetailView({
   leveranciers: Leverancier[];
   onCancel: () => void;
   onCompleteAndReturn: (taakId: string) => void;
+  onDelete: (taakId: string) => void;
   onCreate: (formData: FormData) => void;
   onEdit: (taakId: string, formData: FormData) => void;
   onReschedule: (taak: Onderhoud) => void;
@@ -2266,6 +2294,7 @@ function OnderhoudDetailView({
         <section className="maintenanceActions detailActions">
           <button className="submitButton" onClick={() => onCompleteAndReturn(taak.id)} type="button">Taak voltooid</button>
           <button className="ghostButton" onClick={() => onReschedule(taak)} type="button">Opnieuw plannen</button>
+          <button className="ghostButton dangerButton" onClick={() => onDelete(taak.id)} type="button">Verwijderen</button>
         </section>
       )}
       <OnderhoudForm
