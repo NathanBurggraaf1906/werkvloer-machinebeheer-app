@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Image from "next/image";
 import {
@@ -22,7 +22,7 @@ import type {
   Weekdag,
 } from "@/lib/types";
 
-const appVersion = "V1.6";
+const appVersion = "V1.7";
 const storageKey = "werkvloer-machinebeheer-v1";
 const microsoftClientId = "0d1f2e04-7363-408c-8d69-26516c6f1e98";
 const microsoftTenantId = "568c87e9-d6ed-4409-acab-1251c4d47545";
@@ -109,6 +109,16 @@ const weekdagen: Weekdag[] = [
   "Zondag",
 ];
 
+const onderhoudHerhalingOptions: Onderhoud["herhaling"][] = [
+  "Geen",
+  "Wekelijks",
+  "Elke 2 weken",
+  "Maandelijks",
+  "Elk kwartaal",
+  "Elk half jaar",
+  "Jaarlijks",
+];
+
 function createMicrosoftClient() {
   return new PublicClientApplication({
     auth: {
@@ -146,9 +156,10 @@ function normalizeData(data: AppData): AppData {
       return {
         ...taak,
         status,
-        herhaling: taak.herhaling ?? "Geen",
+        herhaling: normalizeOnderhoudHerhaling(taak.herhaling),
         herhalingWeekdag: taak.herhalingWeekdag ?? "Maandag",
         herhalingTot: taak.herhalingTot ?? "",
+        automatischOpnieuwPlannen: taak.automatischOpnieuwPlannen ?? taak.herhaling !== "Geen",
         verantwoordelijkeType: taak.verantwoordelijkeType ?? "Persoon",
         verantwoordelijkeRefId:
           taak.verantwoordelijkeRefId ?? taak.verantwoordelijkeId ?? "",
@@ -179,13 +190,6 @@ function getResponsibleLabel(taak: Onderhoud, personen: Persoon[], leveranciers:
 
 function getWeekdayIndex(weekdag: Weekdag) {
   return [1, 2, 3, 4, 5, 6, 0][weekdagen.indexOf(weekdag)] ?? 1;
-}
-
-function getFirstWeekdayDate(year: number, month: number, weekdag: Weekdag) {
-  const datum = new Date(year, month, 1);
-  const offset = (getWeekdayIndex(weekdag) - datum.getDay() + 7) % 7;
-  datum.setDate(1 + offset);
-  return datum;
 }
 
 function useAppData() {
@@ -381,7 +385,7 @@ function booleanValue(fields: Record<string, unknown>, names: string[], fallback
     const value = fieldValue(fields, name);
     if (typeof value === "boolean") return value;
     if (typeof value === "number") return value === 1;
-    if (typeof value === "string") return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
+    if (typeof value === "string") return ["1", "true", "yes", "waar", "ja"].includes(value.toLowerCase());
   }
 
   return fallback;
@@ -437,6 +441,15 @@ function lookupIdValue(fields: Record<string, unknown>, displayName: string) {
 
 function choiceValue<T extends string>(value: string, allowed: readonly T[], fallback: T) {
   return allowed.includes(value as T) ? (value as T) : fallback;
+}
+
+function normalizeOnderhoudHerhaling(value: unknown): Onderhoud["herhaling"] {
+  if (typeof value !== "string") return "Geen";
+  const trimmed = value.trim();
+  const normalized = normalizeFieldName(trimmed);
+  if (normalized === normalizeFieldName("Eerste weekdag van de maand")) return "Maandelijks";
+  if (normalized === normalizeFieldName("Eerste weekdag van het kwartaal")) return "Elk kwartaal";
+  return onderhoudHerhalingOptions.find((option) => normalizeFieldName(option) === normalized) ?? "Geen";
 }
 
 function idFromLookup(map: Map<string, string>, lookupId: string) {
@@ -509,17 +522,32 @@ async function getSharePointListContext(auth: AuthState, listName: string): Prom
 }
 
 function setFieldIfFound(
-  fields: Record<string, string | number | null>,
+  fields: Record<string, string | number | boolean | null>,
   columns: SharePointColumn[],
   displayName: string,
-  value: string | number | null,
+  value: string | number | boolean | null,
 ) {
   const internalName = columnInternalName(columns, displayName);
   if (internalName) fields[internalName] = value;
 }
 
+function setFieldIfFoundByAnyName(
+  fields: Record<string, string | number | boolean | null>,
+  columns: SharePointColumn[],
+  displayNames: string[],
+  value: string | number | boolean | null,
+) {
+  for (const displayName of displayNames) {
+    const internalName = columnInternalName(columns, displayName);
+    if (internalName) {
+      fields[internalName] = value;
+      return;
+    }
+  }
+}
+
 function setLookupIfFound(
-  fields: Record<string, string | number | null>,
+  fields: Record<string, string | number | boolean | null>,
   columns: SharePointColumn[],
   displayName: string,
   appId: string,
@@ -537,7 +565,7 @@ function setLookupIfFound(
 }
 
 function onderhoudFieldsForSharePoint(taak: Onderhoud, columns: SharePointColumn[]) {
-  const fields: Record<string, string | number | null> = {
+  const fields: Record<string, string | number | boolean | null> = {
     Title: taak.title,
   };
 
@@ -559,8 +587,9 @@ function onderhoudFieldsForSharePoint(taak: Onderhoud, columns: SharePointColumn
   setFieldIfFound(fields, columns, "Type onderhoud", taak.typeOnderhoud);
   setFieldIfFound(fields, columns, "Status", taak.status);
   setFieldIfFound(fields, columns, "Herhaling", taak.herhaling);
-  setFieldIfFound(fields, columns, "Herhaling weekdag", taak.herhalingWeekdag);
+  setFieldIfFoundByAnyName(fields, columns, ["Voorkeursdag", "Herhaling weekdag"], taak.herhalingWeekdag);
   setFieldIfFound(fields, columns, "Herhalen tot", taak.herhalingTot || null);
+  setFieldIfFound(fields, columns, "Automatisch opnieuw plannen", taak.automatischOpnieuwPlannen);
   setFieldIfFound(fields, columns, "Opmerking", taak.opmerking);
 
   return fields;
@@ -774,9 +803,10 @@ function mapSharePointData(items: {
     return {
       datumGepland: dateValue(fields, ["Datumgepland", "Datum gepland"]),
       datumUitgevoerd: dateValue(fields, ["Datumuitgevoerd", "Datum uitgevoerd"]),
-      herhaling: choiceValue(stringValue(fields, ["Herhaling"]), ["Geen", "Wekelijks", "Maandelijks", "Jaarlijks", "Eerste weekdag van de maand", "Eerste weekdag van het kwartaal"], "Geen"),
+      automatischOpnieuwPlannen: booleanValue(fields, ["Automatischopnieuwplannen", "Automatisch opnieuw plannen"], true),
+      herhaling: normalizeOnderhoudHerhaling(stringValue(fields, ["Herhaling"])),
       herhalingTot: dateValue(fields, ["Herhalentot", "Herhalen tot"]),
-      herhalingWeekdag: choiceValue(stringValue(fields, ["Herhalingweekdag", "Herhaling weekdag"]), weekdagen, "Maandag"),
+      herhalingWeekdag: choiceValue(stringValue(fields, ["Herhalingweekdag", "Voorkeursdag", "Herhaling weekdag"]), weekdagen, "Maandag"),
       id: `sp-onderhoud-${item.id}`,
       leverancierId: verantwoordelijkeLeverancierId,
       machineId: idFromLookup(machineIds, lookupIdValue(fields, "Machine")),
@@ -1553,6 +1583,7 @@ function WerkvloerFlow({
   async function addOnderhoud(formData: FormData) {
     if (!selectedMachine) return;
     const responsible = parseResponsibleValue(String(formData.get("verantwoordelijke") || `Persoon:${selectedMachine.verantwoordelijkeId || data.personen[0]?.id || ""}`));
+    const herhaling = normalizeOnderhoudHerhaling(String(formData.get("herhaling") || "Geen"));
 
     const taak: Onderhoud = {
       id: createId("ond"),
@@ -1566,9 +1597,10 @@ function WerkvloerFlow({
       verantwoordelijkeRefId: responsible.id,
       leverancierId: responsible.type === "Leverancier" ? responsible.id : selectedMachine.leverancierId,
       status: String(formData.get("status") || "Gepland") as Onderhoud["status"],
-      herhaling: String(formData.get("herhaling") || "Geen") as Onderhoud["herhaling"],
+      herhaling,
       herhalingWeekdag: String(formData.get("herhalingWeekdag") || "Maandag") as Weekdag,
       herhalingTot: "",
+      automatischOpnieuwPlannen: herhaling !== "Geen" && formData.get("automatischOpnieuwPlannen") === "on",
       opmerking: String(formData.get("opmerking") || ""),
     };
 
@@ -1587,6 +1619,7 @@ function WerkvloerFlow({
     const responsible = parseResponsibleValue(String(formData.get("verantwoordelijke") || ""));
     const taakVoorUpdate = data.onderhoud.find((taak) => taak.id === taakId);
     if (!taakVoorUpdate) return;
+    const herhaling = normalizeOnderhoudHerhaling(String(formData.get("herhaling") || "Geen"));
 
     const bijgewerkteTaak: Onderhoud = {
       ...taakVoorUpdate,
@@ -1599,9 +1632,10 @@ function WerkvloerFlow({
       verantwoordelijkeRefId: responsible.id,
       leverancierId: responsible.type === "Leverancier" ? responsible.id : taakVoorUpdate.leverancierId,
       status: String(formData.get("status") || taakVoorUpdate.status) as Onderhoud["status"],
-      herhaling: String(formData.get("herhaling") || "Geen") as Onderhoud["herhaling"],
+      herhaling,
       herhalingWeekdag: String(formData.get("herhalingWeekdag") || "Maandag") as Weekdag,
       herhalingTot: "",
+      automatischOpnieuwPlannen: herhaling !== "Geen" && formData.get("automatischOpnieuwPlannen") === "on",
       opmerking: String(formData.get("opmerking") || ""),
     };
 
@@ -1619,7 +1653,7 @@ function WerkvloerFlow({
   function createFollowUpOnderhoud(taak: Onderhoud, datumUitgevoerd?: string) {
     const afgerondeTaak = datumUitgevoerd ? { ...taak, datumUitgevoerd } : taak;
     const nextDate = getNextOnderhoudDate(afgerondeTaak);
-    if (taak.herhaling === "Geen" || (taak.herhalingTot && nextDate > taak.herhalingTot)) return null;
+    if (!taak.automatischOpnieuwPlannen || taak.herhaling === "Geen") return null;
 
     return {
       ...taak,
@@ -2271,25 +2305,19 @@ function getOnderhoudDisplayStatus(taak: Onderhoud) {
 }
 
 function getNextOnderhoudDate(taak: Onderhoud) {
-  const basisDatum =
-    taak.datumUitgevoerd && taak.datumUitgevoerd > (taak.datumGepland || "")
-      ? taak.datumUitgevoerd
-      : taak.datumGepland || taak.datumUitgevoerd || getTodayValue();
+  const basisDatum = taak.datumUitgevoerd || taak.datumGepland || getTodayValue();
   const start = new Date(`${basisDatum}T00:00:00`);
 
   if (taak.herhaling === "Wekelijks") start.setDate(start.getDate() + 7);
+  if (taak.herhaling === "Elke 2 weken") start.setDate(start.getDate() + 14);
   if (taak.herhaling === "Maandelijks") start.setMonth(start.getMonth() + 1);
+  if (taak.herhaling === "Elk kwartaal") start.setMonth(start.getMonth() + 3);
+  if (taak.herhaling === "Elk half jaar") start.setMonth(start.getMonth() + 6);
   if (taak.herhaling === "Jaarlijks") start.setFullYear(start.getFullYear() + 1);
-  if (taak.herhaling === "Eerste weekdag van de maand") {
-    start.setMonth(start.getMonth() + 1);
-    return getFirstWeekdayDate(start.getFullYear(), start.getMonth(), taak.herhalingWeekdag).toISOString().slice(0, 10);
-  }
-  if (taak.herhaling === "Eerste weekdag van het kwartaal") {
-    start.setMonth(start.getMonth() + 3);
-    const kwartaalMaand = Math.floor(start.getMonth() / 3) * 3;
-    return getFirstWeekdayDate(start.getFullYear(), kwartaalMaand, taak.herhalingWeekdag).toISOString().slice(0, 10);
-  }
   if (taak.herhaling === "Geen") start.setDate(start.getDate() + 7);
+
+  const preferredDayOffset = (getWeekdayIndex(taak.herhalingWeekdag) - start.getDay() + 7) % 7;
+  start.setDate(start.getDate() + preferredDayOffset);
 
   return start.toISOString().slice(0, 10);
 }
@@ -2562,10 +2590,14 @@ function OnderhoudForm({
         </select>
       </label>
       <label>Status<select name="status" defaultValue={taak?.status ?? "Gepland"}><option>Gepland</option><option>In proces</option><option>Voltooid</option></select></label>
-      <label>Herhaling<select name="herhaling" value={herhaling} onChange={(event) => setHerhaling(event.target.value as Onderhoud["herhaling"])}><option>Geen</option><option>Wekelijks</option><option>Maandelijks</option><option>Jaarlijks</option><option>Eerste weekdag van de maand</option><option>Eerste weekdag van het kwartaal</option></select></label>
+      <label>Herhaling<select name="herhaling" value={herhaling} onChange={(event) => setHerhaling(event.target.value as Onderhoud["herhaling"])}>{onderhoudHerhalingOptions.map((option) => <option key={option}>{option}</option>)}</select></label>
       {herhaling !== "Geen" && (
         <>
-          <label>Eerste weekdag<select name="herhalingWeekdag" defaultValue={taak?.herhalingWeekdag ?? "Maandag"}>{weekdagen.map((weekdag) => <option key={weekdag}>{weekdag}</option>)}</select></label>
+          <label>Voorkeursdag<select name="herhalingWeekdag" defaultValue={taak?.herhalingWeekdag ?? "Maandag"}>{weekdagen.map((weekdag) => <option key={weekdag}>{weekdag}</option>)}</select></label>
+          <label className="checkLine">
+            <input name="automatischOpnieuwPlannen" type="checkbox" defaultChecked={taak?.automatischOpnieuwPlannen ?? true} />
+            Automatisch opnieuw plannen bij voltooiing
+          </label>
         </>
       )}
       <label>Opmerking<textarea name="opmerking" rows={3} defaultValue={taak?.opmerking ?? ""} placeholder="Wat moet er gebeuren?" /></label>

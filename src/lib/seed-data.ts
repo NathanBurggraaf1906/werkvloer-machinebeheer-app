@@ -120,6 +120,7 @@ export const initialData: AppData = {
       herhaling: "Maandelijks",
       herhalingWeekdag: "Maandag",
       herhalingTot: "2026-12-31",
+      automatischOpnieuwPlannen: true,
       opmerking: "Controleer messen, kap en veiligheidsschakelaar.",
     },
     {
@@ -137,6 +138,7 @@ export const initialData: AppData = {
       herhaling: "Geen",
       herhalingWeekdag: "Maandag",
       herhalingTot: "",
+      automatischOpnieuwPlannen: false,
       opmerking: "Seal lijkt niet overal gelijkmatig.",
     },
   ],

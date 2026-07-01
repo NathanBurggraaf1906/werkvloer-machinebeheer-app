@@ -63,12 +63,14 @@ export type Onderhoud = {
   herhaling:
     | "Geen"
     | "Wekelijks"
+    | "Elke 2 weken"
     | "Maandelijks"
-    | "Jaarlijks"
-    | "Eerste weekdag van de maand"
-    | "Eerste weekdag van het kwartaal";
+    | "Elk kwartaal"
+    | "Elk half jaar"
+    | "Jaarlijks";
   herhalingWeekdag: Weekdag;
   herhalingTot: string;
+  automatischOpnieuwPlannen: boolean;
   opmerking: string;
 };
 
