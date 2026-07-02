@@ -11,6 +11,14 @@ const bellota = Bellota_Text({
 export const metadata: Metadata = {
   title: "Werkvloer Machinebeheer",
   description: "Mobiele werkvloer-app en beheerhub voor machinebeheer.",
+  icons: {
+    apple: "/apple-icon.png",
+    icon: [
+      { url: "/favicon.ico" },
+      { url: "/icon.png", type: "image/png" },
+    ],
+    shortcut: "/favicon.ico",
+  },
 };
 
 export default function RootLayout({
